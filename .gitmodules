@@ -1,0 +1,4 @@
+[submodule "klayslave/ethTxGenerator"]
+	path = klayslave/ethTxGenerator
+	url = https://github.com/jimni1222/ethTxGenerator.git
+	branch = master
