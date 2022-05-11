@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"net/http"
 	"os"
 	"runtime"
 	"strings"
@@ -442,6 +443,7 @@ func initArgs(tcNames string) {
 	keyPtr := flag.String("key", "", "privatekey of coinbase")
 	chargeKLAYAmountPtr := flag.Int("charge", chargeKLAYAmount, "charging amount for each test account in KLAY")
 	versionPtr := flag.Bool("version", false, "show version number")
+	httpMaxIdleConnsPtr := flag.Int("http.maxidleconns", 100, "maximum number of idle connections in default http client")
 	flag.StringVar(&tcStr, "tc", tcNames, "tasks which user want to run, multiple tasks are separated by comma.")
 
 	flag.Parse()
@@ -453,6 +455,12 @@ func initArgs(tcNames string) {
 
 	if *keyPtr == "" {
 		log.Fatal("key argument is not defined. You should set the key for coinbase.\n example) klaytc -key='2ef07640fd8d3f568c23185799ee92e0154bf08ccfe5c509466d1d40baca3430'")
+	}
+
+	// setup default http client.
+	if tr, ok := http.DefaultTransport.(*http.Transport); ok {
+		tr.MaxIdleConns = *httpMaxIdleConnsPtr
+		tr.MaxIdleConnsPerHost = *httpMaxIdleConnsPtr
 	}
 
 	// for TC Selection
