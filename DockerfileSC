@@ -1,7 +1,7 @@
 FROM kjhman21/dev:go1.11.2-solc0.4.24
 
 ENV PKG_DIR /locustSC-docker-pkg
-ENV SRC_DIR /go/src/github.com/klaytn/klaytn-load-tester
+ENV SRC_DIR /go/src/github.com/ground-x/locust-load-tester
 ENV KLAYTN_SRC_DIR /go/src/github.com/klaytn/klaytn
 ENV GOPATH /go
 
