@@ -2,7 +2,8 @@ package boomer
 
 import (
 	"fmt"
-	"github.com/ground-x/locust-load-tester/klayslave/account"
+
+	"github.com/klaytn/klaytn-load-tester/klayslave/account"
 	"github.com/klaytn/klaytn/common"
 	"log"
 	"math"

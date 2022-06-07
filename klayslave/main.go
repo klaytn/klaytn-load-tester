@@ -4,16 +4,18 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/ground-x/locust-load-tester"
-	"github.com/ground-x/locust-load-tester/klayslave/account"
-	"github.com/ground-x/locust-load-tester/klayslave/testcases/scKLAYTransferFallbackTc"
-	"github.com/ground-x/locust-load-tester/klayslave/testcases/scKLAYTransferTc"
-	"github.com/ground-x/locust-load-tester/klayslave/testcases/scKLAYTransferTcWithCheck"
-	"github.com/ground-x/locust-load-tester/klayslave/testcases/scNFTTransfer2StepTcWithCheck"
-	"github.com/ground-x/locust-load-tester/klayslave/testcases/scNFTTransferTcWithCheck"
-	"github.com/ground-x/locust-load-tester/klayslave/testcases/scTokenTransfer2StepTcWithCheck"
-	"github.com/ground-x/locust-load-tester/klayslave/testcases/scTokenTransferTc"
-	"github.com/ground-x/locust-load-tester/klayslave/testcases/scTokenTransferTcWithCheck"
+
+	boomer "github.com/klaytn/klaytn-load-tester"
+	"github.com/klaytn/klaytn-load-tester/klayslave/account"
+	"github.com/klaytn/klaytn-load-tester/klayslave/scKLAYTransferFallbackTc"
+	"github.com/klaytn/klaytn-load-tester/klayslave/scKLAYTransferTc"
+	"github.com/klaytn/klaytn-load-tester/klayslave/scKLAYTransferTcWithCheck"
+	"github.com/klaytn/klaytn-load-tester/klayslave/scNFTTransfer2StepTcWithCheck"
+	"github.com/klaytn/klaytn-load-tester/klayslave/scNFTTransferTcWithCheck"
+	"github.com/klaytn/klaytn-load-tester/klayslave/scTokenTransfer2StepTcWithCheck"
+	"github.com/klaytn/klaytn-load-tester/klayslave/scTokenTransferTc"
+	"github.com/klaytn/klaytn-load-tester/klayslave/scTokenTransferTcWithCheck"
+
 	"github.com/klaytn/klaytn/accounts/abi/bind"
 	"github.com/klaytn/klaytn/blockchain/types"
 	"github.com/klaytn/klaytn/common"
@@ -60,6 +62,17 @@ var (
 	KlayForAcc  *big.Int // KLAY balance for each test account
 	TokenForAcc *big.Int // Token balance for each test account
 )
+
+type ExtendedTask struct {
+	Name    string
+	Weight  int
+	Fn      func()
+
+	//For initializing the task
+	Init     func(mcAccs []*account.Account, scAccs []*account.Account, mcBridgeAddress, scBridgeAddress, mcTokenAddress, scTokenAddress, mcNFTAddress, scNFTAddress common.Address)
+	AccGrpMc []*account.Account
+	AccGrpSc []*account.Account
+}
 
 func chargeTestAccounts(coinBase *account.Account, accGrp map[common.Address]*account.Account) {
 	println("Test Account Charge Start...")
