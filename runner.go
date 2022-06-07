@@ -2,6 +2,7 @@ package boomer
 
 import (
 	"fmt"
+
 	"github.com/klaytn/klaytn-load-tester/klayslave/account"
 	"github.com/klaytn/klaytn/common"
 	"log"

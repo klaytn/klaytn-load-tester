@@ -1,14 +1,14 @@
-ARG DOCKER_BASE_IMAGE=klaytn/build_base:latest
-
-FROM ${DOCKER_BASE_IMAGE}
+FROM kjhman21/dev:go1.13.1-solc0.4.24
 
 ENV PKG_DIR /locust-docker-pkg
-ENV SRC_DIR /go/src/github.com/klaytn/klaytn-load-tester
+ENV SRC_DIR /go/src/github.com/ground-x/locust-load-tester
+ENV KLAYTN_SRC_DIR /go/src/github.com/ground-x/klaytn
 ENV GOPATH /go
 
 RUN mkdir -p $PKG_DIR/bin
 
 ADD . $SRC_DIR
+ADD ./klaytn $KLAYTN_SRC_DIR
 
-RUN cd $SRC_DIR/klayslave && go build -ldflags "-linkmode external -extldflags -static"
+RUN cd $SRC_DIR/klayslave && go build
 RUN cp $SRC_DIR/klayslave/klayslave $PKG_DIR/bin
