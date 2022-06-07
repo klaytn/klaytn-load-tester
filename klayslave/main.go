@@ -1,458 +1,324 @@
 package main
 
-//go:generate abigen --sol cpuHeavyTC/CPUHeavy.sol --pkg cpuHeavyTC --out cpuHeavyTC/CPUHeavy.go
-//go:generate abigen --sol userStorageTC/UserStorage.sol --pkg userStorageTC --out userStorageTC/UserStorage.go
-
 import (
 	"context"
 	"flag"
 	"fmt"
+	"runtime"
+	"syscall"
+
+	"github.com/klaytn/klaytn-load-tester/klayslave/account"
+	"github.com/klaytn/klaytn-load-tester/klayslave/scKLAYTransferFallbackTc"
+	"github.com/klaytn/klaytn-load-tester/klayslave/scKLAYTransferTc"
+	"github.com/klaytn/klaytn-load-tester/klayslave/scKLAYTransferTcWithCheck"
+	"github.com/klaytn/klaytn-load-tester/klayslave/scNFTTransfer2StepTcWithCheck"
+	"github.com/klaytn/klaytn-load-tester/klayslave/scNFTTransferTcWithCheck"
+	"github.com/klaytn/klaytn-load-tester/klayslave/scTokenTransfer2StepTcWithCheck"
+	"github.com/klaytn/klaytn-load-tester/klayslave/scTokenTransferTc"
+	"github.com/klaytn/klaytn-load-tester/klayslave/scTokenTransferTcWithCheck"
+	"github.com/klaytn/klaytn/accounts/abi/bind"
+	"github.com/klaytn/klaytn/blockchain/types"
+	"github.com/klaytn/klaytn/common"
+	"github.com/klaytn/klaytn/contracts/sc_erc20"
+	"github.com/klaytn/klaytn/contracts/sc_erc721"
+	"github.com/myzhan/boomer"
 	"log"
 	"math/big"
 	"os"
-	"runtime"
 	"strings"
-	"syscall"
 	"time"
-
-	"github.com/klaytn/klaytn-load-tester/klayslave/account"
-	"github.com/klaytn/klaytn-load-tester/klayslave/blockbench/analyticTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/blockbench/doNothingTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/blockbench/ioHeavyTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/blockbench/smallBankTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/blockbench/ycsbTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/cpuHeavyTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/erc20TransferTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/erc721TransferTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/ethereumTxAccessListTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/ethereumTxDynamicFeeTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/ethereumTxLegacyTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/internalTxTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/largeMemoTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/newAccountCreationTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/newAccountUpdateTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/newCancelTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/newEthereumAccessListTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/newEthereumDynamicFeeTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/newFeeDelegatedAccountUpdateTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/newFeeDelegatedAccountUpdateWithRatioTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/newFeeDelegatedCancelTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/newFeeDelegatedCancelWithRatioTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/newFeeDelegatedSmartContractDeployTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/newFeeDelegatedSmartContractDeployWithRatioTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/newFeeDelegatedSmartContractExecutionTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/newFeeDelegatedSmartContractExecutionWithRatioTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/newFeeDelegatedValueTransferMemoTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/newFeeDelegatedValueTransferMemoWithRatioTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/newFeeDelegatedValueTransferTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/newFeeDelegatedValueTransferWithRatioTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/newSmartContractDeployTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/newSmartContractExecutionTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/newValueTransferLargeMemoTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/newValueTransferMemoTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/newValueTransferSmallMemoTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/newValueTransferTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/newValueTransferWithCancelTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/readApiCallContractTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/readApiCallTC"
-	receiptCheckTc "github.com/klaytn/klaytn-load-tester/klayslave/receiptCheckTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/storageTrieWriteTC"
-	"github.com/klaytn/klaytn-load-tester/klayslave/transferSignedTc"
-	"github.com/klaytn/klaytn-load-tester/klayslave/transferSignedWithCheckTc"
-	"github.com/klaytn/klaytn-load-tester/klayslave/transferUnsignedTc"
-	"github.com/klaytn/klaytn-load-tester/klayslave/userStorageTC"
-	"github.com/klaytn/klaytn/accounts/abi/bind"
-	"github.com/klaytn/klaytn/blockchain/types"
-	"github.com/klaytn/klaytn/client"
-	klay "github.com/klaytn/klaytn/client"
-	"github.com/klaytn/klaytn/common"
-	"github.com/klaytn/klaytn/crypto"
-	"github.com/klaytn/klaytn/params"
-	"github.com/myzhan/boomer"
-)
-
-// sets build options from ldflags.
-var (
-	Version   = "1.0.0"
-	Commit    string
-	Branch    string
-	Tag       string
-	BuildDate string
-	BuildUser string
 )
 
 var (
-	coinbasePrivatekey = ""
-	gCli               *klay.Client
-	gEndpoint          string
+	mcCoinbasePrivatekey = ""
+	mcBackend            *account.Backend
+	mcEndpoint           string
+	mcIP                 string
 
-	coinbase    *account.Account
-	newCoinbase *account.Account
+	scCoinbasePrivatekey = ""
+	scBackend            *account.Backend
+	scEndpoint           string
 
-	nUserForUnsigned    = 5 //number of virtual user account for unsigned tx
-	accGrpForUnsignedTx []*account.Account
+	subBridgeBackends []*account.Backend
+	subBridges        []string
 
-	nUserForSigned    = 5
-	accGrpForSignedTx []*account.Account
+	mcCoinbase    *account.Account
+	mcNewCoinbase *account.Account
 
-	nUserForNewAccounts  = 5
-	accGrpForNewAccounts []*account.Account
+	scCoinbase    *account.Account
+	scNewCoinbase *account.Account
 
-	activeUserPercent = 100
+	nUser             = 100
+	accGrpMc          []*account.Account
+	mcTokenNFTAddress *common.Address
 
-	SmartContractAccount *account.Account
+	operatorThreshold uint8
+
+	nUserSc  = 100
+	accGrpSc []*account.Account
 
 	tcStr     string
 	tcStrList []string
 
-	chargeValue *big.Int
-
-	gasPrice *big.Int
-	baseFee  *big.Int
+	KlayForAcc  *big.Int // KLAY balance for each test account
+	TokenForAcc *big.Int // Token balance for each test account
 )
 
 type ExtendedTask struct {
-	Name    string
-	Weight  int
-	Fn      func()
-	Init    func(accs []*account.Account, endpoint string, gp *big.Int)
-	AccGrp  []*account.Account
-	EndPint string
+	Weight int
+	Fn     func()
+	Name   string
+
+	// For Initializing the task
+	Init     func(mcAccs []*account.Account, scAccs []*account.Account, mcBridgeAddress, scBridgeAddress, mcTokenAddress, scTokenAddress, mcNFTAddress, scNFTAddress common.Address)
+	AccGrpMc []*account.Account
+	AccGrpSc []*account.Account
 }
 
-func Create(endpoint string) *klay.Client {
-	c, err := klay.Dial(endpoint)
-	if err != nil {
-		log.Fatalf("Failed to connect RPC: %v", err)
-	}
-	return c
-}
-
-func inTheTCList(tcName string) bool {
-	for _, tc := range tcStrList {
-		if tcName == tc {
-			return true
-		}
-	}
-	return false
-}
-
-// Dedicated and fixed private key used to deploy a smart contract for ERC20 and ERC721 value transfer performance test.
-var ERC20DeployPrivateKeyStr = "eb2c84d41c639178ff26a81f488c196584d678bb1390cc20a3aeb536f3969a98"
-var ERC721DeployPrivateKeyStr = "45c40d95c9b7898a21e073b5bf952bcb05f2e70072e239a8bbd87bb74a53355e"
-
-// prepareERC20Transfer sets up ERC20 transfer performance test.
-func prepareERC20Transfer(accGrp map[common.Address]*account.Account) {
-	if !inTheTCList(erc20TransferTC.Name) {
-		return
-	}
-	erc20DeployAcc := account.GetAccountFromKey(0, ERC20DeployPrivateKeyStr)
-	log.Printf("prepareERC20Transfer", "addr", erc20DeployAcc.GetAddress().String())
-	chargeKLAYToTestAccounts(map[common.Address]*account.Account{erc20DeployAcc.GetAddress(): erc20DeployAcc})
-
-	// A smart contract for ERC20 value transfer performance TC.
-	erc20TransferTC.SmartContractAccount = deploySingleSmartContract(erc20DeployAcc, erc20DeployAcc.DeployERC20, "ERC20 Performance Test Contract")
-	newCoinBaseAccountMap := map[common.Address]*account.Account{newCoinbase.GetAddress(): newCoinbase}
-	firstChargeTokenToTestAccounts(newCoinBaseAccountMap, erc20TransferTC.SmartContractAccount.GetAddress(), erc20DeployAcc.TransferERC20, big.NewInt(1e11))
-
-	chargeTokenToTestAccounts(accGrp, erc20TransferTC.SmartContractAccount.GetAddress(), newCoinbase.TransferERC20, big.NewInt(1e4))
-}
-
-// prepareERC721Transfer sets up ERC721 transfer performance test.
-func prepareERC721Transfer(accGrp []*account.Account) {
-	if !inTheTCList(erc721TransferTC.Name) {
-		return
-	}
-	erc721DeployAcc := account.GetAccountFromKey(0, ERC721DeployPrivateKeyStr)
-	log.Printf("prepareERC721Transfer", "addr", erc721DeployAcc.GetAddress().String())
-	chargeKLAYToTestAccounts(map[common.Address]*account.Account{erc721DeployAcc.GetAddress(): erc721DeployAcc})
-
-	// A smart contract for ERC721 value transfer performance TC.
-	erc721TransferTC.SmartContractAccount = deploySingleSmartContract(erc721DeployAcc, erc721DeployAcc.DeployERC721, "ERC721 Performance Test Contract")
-
-	// Wait for reward tester to get started
-	time.Sleep(30 * time.Second)
-	newCoinbase.MintERC721ToTestAccounts(gCli, accGrp, erc721TransferTC.SmartContractAccount.GetAddress(), 5)
-	log.Println("MintERC721ToTestAccounts", "len(accGrp)", len(accGrp))
-}
-
-// Dedicated and fixed private key used to deploy a smart contract for storage trie write performance test.
-var storageTrieDeployPrivateKeyStr = "3737c381633deaaa4c0bdbc64728f6ef7d381b17e1d30bbb74665839cec942b8"
-
-// prepareStorageTrieWritePerformance sets up ERC20 storage trie write performance test.
-func prepareStorageTrieWritePerformance(accGrp map[common.Address]*account.Account) {
-	if !inTheTCList(storageTrieWriteTC.Name) {
-		return
-	}
-	storageTrieDeployAcc := account.GetAccountFromKey(0, storageTrieDeployPrivateKeyStr)
-	log.Printf("prepareStorageTrieWritePerformance", "addr", storageTrieDeployAcc.GetAddress().String())
-	chargeKLAYToTestAccounts(map[common.Address]*account.Account{storageTrieDeployAcc.GetAddress(): storageTrieDeployAcc})
-
-	// A smart contract for storage trie store performance TC.
-	storageTrieWriteTC.SmartContractAccount = deploySingleSmartContract(storageTrieDeployAcc, storageTrieDeployAcc.DeployStorageTrieWrite, "Storage Trie Performance Test Contract")
-}
-
-func prepareTestAccountsAndContracts(accGrp map[common.Address]*account.Account) {
-	// First, charging KLAY to the test accounts.
-	chargeKLAYToTestAccounts(accGrp)
-
-	// Second, deploy contracts used for some TCs.
-	// If the test case is not on the list, corresponding contract won't be deployed.
-	prepareERC20Transfer(accGrp)
-	prepareStorageTrieWritePerformance(accGrp)
-
-	// Third, deploy contracts for general tests.
-	// A smart contract for general smart contract related TCs.
-	GeneralSmartContract := deploySmartContract(newCoinbase.TransferNewSmartContractDeployTxHumanReadable, "General Purpose Test Smart Contract")
-	newSmartContractExecutionTC.SmartContractAccount = GeneralSmartContract
-	newFeeDelegatedSmartContractExecutionTC.SmartContractAccount = GeneralSmartContract
-	newFeeDelegatedSmartContractExecutionWithRatioTC.SmartContractAccount = GeneralSmartContract
-	ethereumTxLegacyTC.SmartContractAccount = GeneralSmartContract
-	ethereumTxAccessListTC.SmartContractAccount = GeneralSmartContract
-	ethereumTxDynamicFeeTC.SmartContractAccount = GeneralSmartContract
-	newEthereumAccessListTC.SmartContractAccount = GeneralSmartContract
-	newEthereumDynamicFeeTC.SmartContractAccount = GeneralSmartContract
-}
-
-func chargeKLAYToTestAccounts(accGrp map[common.Address]*account.Account) {
-	log.Printf("Start charging KLAY to test accounts")
+func chargeTestAccounts(coinBase *account.Account, accGrp map[common.Address]*account.Account) {
+	println("Test Account Charge Start...")
 
 	numChargedAcc := 0
 	lastFailedNum := 0
 	for _, acc := range accGrp {
+		numChargedAcc++
 		for {
-			_, _, err := newCoinbase.TransferSignedTxReturnTx(true, gCli, acc, chargeValue)
+			_, _, err := coinBase.TransferSignedTx(acc, KlayForAcc)
 			if err == nil {
+				acc.AddBalance(KlayForAcc)
 				break // Success, move to next account.
 			}
-			numChargedAcc, lastFailedNum = estimateRemainingTime(accGrp, numChargedAcc, lastFailedNum)
-		}
-		numChargedAcc++
-	}
 
-	log.Printf("Finished charging KLAY to %d test account(s), Total %d transactions are sent.\n", len(accGrp), numChargedAcc)
-}
+			if lastFailedNum > 0 {
+				// Not 1st failed cases.
+				TPS := (numChargedAcc - lastFailedNum) / 5 // TPS of only this slave during `txpool is full` situation.
+				lastFailedNum = numChargedAcc
 
-type tokenChargeFunc func(initialCharge bool, c *client.Client, tokenContractAddr common.Address, recipient *account.Account, value *big.Int) (*types.Transaction, *big.Int, error)
-
-// firstChargeTokenToTestAccounts charges initially generated tokens to newCoinbase account for further testing.
-// As this work is done simultaneously by different slaves, this should be done in "try and check" manner.
-func firstChargeTokenToTestAccounts(accGrp map[common.Address]*account.Account, tokenContractAddr common.Address, tokenChargeFn tokenChargeFunc, tokenChargeAmount *big.Int) {
-	log.Printf("Start initial token charging to new coinbase")
-
-	numChargedAcc := 0
-	for _, recipientAccount := range accGrp {
-		for {
-			tx, _, err := tokenChargeFn(true, gCli, tokenContractAddr, recipientAccount, tokenChargeAmount)
-			for err != nil {
-				log.Printf("Failed to execute %s: err %s", tx.Hash().String(), err.Error())
-				time.Sleep(1 * time.Second) // Mostly, the err is `txpool is full`, retry after a while.
-				tx, _, err = tokenChargeFn(true, gCli, tokenContractAddr, recipientAccount, tokenChargeAmount)
-			}
-			ctx, cancelFn := context.WithTimeout(context.Background(), 10*time.Second)
-			receipt, err := bind.WaitMined(ctx, gCli, tx)
-			cancelFn()
-			if receipt != nil {
-				break
-			}
-		}
-		numChargedAcc++
-	}
-
-	log.Printf("Finished initial token charging to %d new coinbase account(s), Total %d transactions are sent.\n", len(accGrp), numChargedAcc)
-}
-
-// chargeTokenToTestAccounts charges default token to the test accounts for testing.
-// As it is done independently among the slaves, it has simpler logic than firstChargeTokenToTestAccounts.
-func chargeTokenToTestAccounts(accGrp map[common.Address]*account.Account, tokenContractAddr common.Address, tokenChargeFn tokenChargeFunc, tokenChargeAmount *big.Int) {
-	log.Printf("Start charging tokens to test accounts")
-
-	numChargedAcc := 0
-	lastFailedNum := 0
-	for _, recipientAccount := range accGrp {
-		for {
-			_, _, err := tokenChargeFn(false, gCli, tokenContractAddr, recipientAccount, tokenChargeAmount)
-			if err == nil {
-				break // Success, move to next account.
-			}
-			numChargedAcc, lastFailedNum = estimateRemainingTime(accGrp, numChargedAcc, lastFailedNum)
-		}
-		numChargedAcc++
-	}
-
-	log.Printf("Finished charging tokens to %d test account(s), Total %d transactions are sent.\n", len(accGrp), numChargedAcc)
-}
-
-func estimateRemainingTime(accGrp map[common.Address]*account.Account, numChargedAcc, lastFailedNum int) (int, int) {
-	if lastFailedNum > 0 {
-		// Not 1st failed cases.
-		TPS := (numChargedAcc - lastFailedNum) / 5 // TPS of only this slave during `txpool is full` situation.
-		lastFailedNum = numChargedAcc
-
-		if TPS <= 5 {
-			log.Printf("Retry to charge test account #%d. But it is too slow. %d TPS\n", numChargedAcc, TPS)
-		} else {
-			remainTime := (len(accGrp) - numChargedAcc) / TPS
-			remainHour := remainTime / 3600
-			remainMinute := (remainTime % 3600) / 60
-
-			log.Printf("Retry to charge test account #%d. Estimated remaining time: %d hours %d mins later\n", numChargedAcc, remainHour, remainMinute)
-		}
-	} else {
-		// 1st failed case.
-		lastFailedNum = numChargedAcc
-		log.Printf("Retry to charge test account #%d.\n", numChargedAcc)
-	}
-	time.Sleep(5 * time.Second) // Mostly, the err is `txpool is full`, retry after a while.
-	return numChargedAcc, lastFailedNum
-}
-
-type contractDeployFunc func(c *client.Client, to *account.Account, value *big.Int, humanReadable bool) (common.Address, *types.Transaction, *big.Int, error)
-
-// deploySmartContract deploys smart contracts by the number of locust slaves.
-// In other words, each slave owns its own contract for testing.
-func deploySmartContract(contractDeployFn contractDeployFunc, contractName string) *account.Account {
-	addr, lastTx, _, err := contractDeployFn(gCli, SmartContractAccount, common.Big0, false)
-	for err != nil {
-		log.Printf("Failed to deploy a %s: err %s", contractName, err.Error())
-		time.Sleep(5 * time.Second) // Mostly, the err is `txpool is full`, retry after a while.
-		addr, lastTx, _, err = contractDeployFn(gCli, SmartContractAccount, common.Big0, false)
-	}
-
-	log.Printf("Start waiting the receipt of the %s tx(%v).\n", contractName, lastTx.Hash().String())
-	bind.WaitMined(context.Background(), gCli, lastTx)
-
-	deployedContract := account.NewKlaytnAccountWithAddr(1, addr)
-	log.Printf("%s has been deployed to : %s\n", contractName, addr.String())
-	return deployedContract
-}
-
-// deploySingleSmartContract deploys only one smart contract among the slaves.
-// It the contract is already deployed by other slave, it just calculates the address of the contract.
-func deploySingleSmartContract(erc20DeployAcc *account.Account, contractDeployFn contractDeployFunc, contractName string) *account.Account {
-	addr, lastTx, _, err := contractDeployFn(gCli, SmartContractAccount, common.Big0, false)
-	for err != nil {
-		if err == account.AlreadyDeployedErr {
-			erc20Addr := crypto.CreateAddress(erc20DeployAcc.GetAddress(), 0)
-			return account.NewKlaytnAccountWithAddr(1, erc20Addr)
-		}
-		if strings.HasPrefix(err.Error(), "known transaction") {
-			erc20Addr := crypto.CreateAddress(erc20DeployAcc.GetAddress(), 0)
-			return account.NewKlaytnAccountWithAddr(1, erc20Addr)
-		}
-		log.Printf("Failed to deploy a %s: err %s", contractName, err.Error())
-		time.Sleep(5 * time.Second) // Mostly, the err is `txpool is full`, retry after a while.
-		addr, lastTx, _, err = contractDeployFn(gCli, SmartContractAccount, common.Big0, false)
-	}
-
-	log.Printf("Start waiting the receipt of the %s tx(%v).\n", contractName, lastTx.Hash().String())
-	bind.WaitMined(context.Background(), gCli, lastTx)
-
-	deployedContract := account.NewKlaytnAccountWithAddr(1, addr)
-	log.Printf("%s has been deployed to : %s\n", contractName, addr.String())
-	return deployedContract
-}
-
-func prepareAccounts() {
-	totalChargeValue := new(big.Int)
-	totalChargeValue.Mul(chargeValue, big.NewInt(int64(nUserForUnsigned+nUserForSigned+nUserForNewAccounts+1)))
-
-	// Import coinbase Account
-	coinbase = account.GetAccountFromKey(0, coinbasePrivatekey)
-	newCoinbase = account.NewAccount(0)
-
-	if len(chargeValue.Bits()) != 0 {
-		for {
-			coinbase.GetNonceFromBlock(gCli)
-			hash, _, err := coinbase.TransferSignedTx(gCli, newCoinbase, totalChargeValue)
-			if err != nil {
-				log.Printf("%v: charge newCoinbase fail: %v\n", os.Getpid(), err)
-				time.Sleep(1000 * time.Millisecond)
-				continue
-			}
-
-			log.Printf("%v : charge newCoinbase: %v, Txhash=%v\n", os.Getpid(), newCoinbase.GetAddress().String(), hash.String())
-
-			getReceipt := false
-			// After this loop waiting for 10 sec, It will retry to charge with new nonce.
-			// it means another node stole the nonce.
-			for i := 0; i < 5; i++ {
-				time.Sleep(2000 * time.Millisecond)
-				ctx := context.Background()
-
-				//_, err := gCli.TransactionReceipt(ctx, hash)
-				//if err != nil {
-				//	getReceipt = true
-				//	log.Printf("%v : charge newCoinbase success: %v\n", os.Getpid(), newCoinbase.GetAddress().String())
-				//	break
-				//}
-				//log.Printf("%v : charge newCoinbase waiting: %v\n", os.Getpid(), newCoinbase.GetAddress().String())
-
-				val, err := gCli.BalanceAt(ctx, newCoinbase.GetAddress(), nil)
-				if err == nil {
-					if val.Cmp(big.NewInt(0)) == 1 {
-						getReceipt = true
-						log.Printf("%v : charge newCoinbase success: %v, balance=%v peb\n", os.Getpid(), newCoinbase.GetAddress().String(), val.String())
-						break
-					}
-					log.Printf("%v : charge newCoinbase waiting: %v\n", os.Getpid(), newCoinbase.GetAddress().String())
+				if TPS <= 5 {
+					log.Printf("Retry to charge test account #%d. But it is too slow. %d TPS\n", numChargedAcc, TPS)
 				} else {
-					log.Printf("%v : check balance err: %v\n", os.Getpid(), err)
+					remainTime := (len(accGrp) - numChargedAcc) / TPS
+					remainHour := remainTime / 3600
+					remainMinute := (remainTime % 3600) / 60
+
+					log.Printf("Retry to charge test account #%d. Estimated remaining time: %d hours %d mins later\n", numChargedAcc, remainHour, remainMinute)
 				}
+			} else {
+				// 1st failed case.
+				lastFailedNum = numChargedAcc
+				log.Printf("Retry to charge test account #%d.\n", numChargedAcc)
 			}
-
-			if getReceipt {
-				break
-			}
+			time.Sleep(5 * time.Second) // Mostly, the err is `txpool is full`, retry after a while.
 		}
-	}
-
-	println("Unsigned Account Group Preparation...")
-	//bar := pb.StartNew(nUserForUnsigned)
-
-	// Create test account pool
-	for i := 0; i < nUserForUnsigned; i++ {
-		accGrpForUnsignedTx = append(accGrpForUnsignedTx, account.NewAccount(i))
-		fmt.Printf("%v\n", accGrpForUnsignedTx[i].GetAddress().String())
 		//bar.Increment()
 	}
 	//bar.Finish()	//bar.FinishPrint("Completed.")
-	//
-	println("Signed Account Group Preparation...")
-	//bar = pb.StartNew(nUserForSigned)
+}
 
-	for i := 0; i < nUserForSigned; i++ {
-		accGrpForSignedTx = append(accGrpForSignedTx, account.NewAccount(i))
-		fmt.Printf("%v\n", accGrpForSignedTx[i].GetAddress().String())
+func chargeTokenTestAccounts(coinBase *account.Account, accGrp map[common.Address]*account.Account, tokenAddr common.Address) {
+	println("Test Account Token Charge Start...")
+
+	numChargedAcc := 0
+	lastFailedNum := 0
+
+	var lastTx *types.Transaction
+
+	for _, acc := range accGrp {
+		numChargedAcc++
+		for {
+			tx, err := coinBase.TransferTokenToAccount(tokenAddr, acc, TokenForAcc)
+			if err == nil {
+				lastTx = tx
+				break // Success, move to next account.
+			}
+
+			if lastFailedNum > 0 {
+				// Not 1st failed cases.
+				TPS := (numChargedAcc - lastFailedNum) / 5 // TPS of only this slave during `txpool is full` situation.
+				lastFailedNum = numChargedAcc
+
+				if TPS <= 5 {
+					log.Printf("Retry to charge test account #%d. But it is too slow. %d TPS\n", numChargedAcc, TPS)
+				} else {
+					remainTime := (len(accGrp) - numChargedAcc) / TPS
+					remainHour := remainTime / 3600
+					remainMinute := (remainTime % 3600) / 60
+
+					log.Printf("Retry to charge test account #%d. Estimated remaining time: %d hours %d mins later\n", numChargedAcc, remainHour, remainMinute)
+				}
+			} else {
+				// 1st failed case.
+				lastFailedNum = numChargedAcc
+				log.Printf("Retry to charge test account #%d.\n", numChargedAcc)
+			}
+			time.Sleep(5 * time.Second) // Mostly, the err is `txpool is full`, retry after a while.
+		}
 		//bar.Increment()
 	}
 
-	println("New account group preparation...")
-	for i := 0; i < nUserForNewAccounts; i++ {
-		accGrpForNewAccounts = append(accGrpForNewAccounts, account.NewKlaytnAccount(i))
+	bind.WaitMined(context.Background(), coinBase.Backend(), lastTx)
+}
+
+func chargeNFTTestAccounts(coinBase *account.Account, accGrp map[common.Address]*account.Account, tokenAddr common.Address, startIDX uint64, numNFTPerAccount uint64) {
+	println("Test Account NFT Charge Start...")
+
+	numChargedAcc := 0
+	lastFailedNum := 0
+
+	var lastTx *types.Transaction
+
+	for _, acc := range accGrp {
+		numChargedAcc++
+		for {
+			start := startIDX + uint64(numChargedAcc-1)*numNFTPerAccount
+			end := startIDX + uint64(numChargedAcc)*numNFTPerAccount
+			tx, err := coinBase.RegisterNFTToAccount(tokenAddr, acc, start, end)
+			if err == nil {
+				lastTx = tx
+				break // Success, move to next account.
+			}
+
+			if lastFailedNum > 0 {
+				// Not 1st failed cases.
+				TPS := (numChargedAcc - lastFailedNum) / 5 // TPS of only this slave during `txpool is full` situation.
+				lastFailedNum = numChargedAcc
+
+				if TPS <= 5 {
+					log.Printf("Retry to charge test account #%d. But it is too slow. %d TPS\n", numChargedAcc, TPS)
+				} else {
+					remainTime := (len(accGrp) - numChargedAcc) / TPS
+					remainHour := remainTime / 3600
+					remainMinute := (remainTime % 3600) / 60
+
+					log.Printf("Retry to charge test account #%d. Estimated remaining time: %d hours %d mins later\n", numChargedAcc, remainHour, remainMinute)
+				}
+			} else {
+				// 1st failed case.
+				lastFailedNum = numChargedAcc
+				log.Printf("Retry to charge test account #%d.\n", numChargedAcc)
+			}
+			time.Sleep(5 * time.Second) // Mostly, the err is `txpool is full`, retry after a while.
+		}
+		//bar.Increment()
+	}
+
+	bind.WaitMined(context.Background(), coinBase.Backend(), lastTx)
+}
+
+func prepareAccounts() {
+	totalKLAY := new(big.Int)
+	totalKLAY.Mul(KlayForAcc, big.NewInt(int64(nUser+nUserSc)))
+	totalKLAY.Mul(totalKLAY, big.NewInt(3))
+
+	// Import coinbase Account
+	mcCoinbase = account.GetAccountFromKey(mcCoinbasePrivatekey, mcBackend)
+	mcNewCoinbase = account.NewAccount(mcBackend)
+
+	for {
+		mcCoinbase.GetNonceFromBlock()
+		tx, _, err := mcCoinbase.TransferSignedTx(mcNewCoinbase, totalKLAY)
+		if err != nil {
+			log.Printf("%v: charge newCoinbase fail: %v\n", os.Getpid(), err)
+			time.Sleep(1000 * time.Millisecond)
+			continue
+		}
+
+		log.Printf("%v : charge newCoinbase: %v, Txhash=%v\n", os.Getpid(), mcNewCoinbase.GetAddress().String(), tx.Hash().String())
+
+		getReceipt := false
+		// After this loop waiting for 10 sec, It will retry to charge with new nonce.
+		// it means another node stole the nonce.
+		for i := 0; i < 5; i++ {
+			time.Sleep(2000 * time.Millisecond)
+
+			val, err := mcNewCoinbase.GetBalance()
+			if err == nil {
+				if val.Cmp(big.NewInt(0)) == 1 {
+					getReceipt = true
+					log.Printf("%v : charge newCoinbase success: %v, balance=%v peb\n", os.Getpid(), mcNewCoinbase.GetAddress().String(), val.String())
+					break
+				}
+				log.Printf("%v : charge newCoinbase waiting: %v\n", os.Getpid(), mcNewCoinbase.GetAddress().String())
+			} else {
+				log.Printf("%v : check banalce err: %v\n", os.Getpid(), err)
+			}
+		}
+
+		if getReceipt {
+			break
+		}
+	}
+
+	scCoinbase = account.GetAccountFromKey(scCoinbasePrivatekey, scBackend)
+	scNewCoinbase = account.NewAccount(scBackend)
+
+	for {
+		scCoinbase.GetNonceFromBlock()
+		tx, _, err := scCoinbase.TransferSignedTx(scNewCoinbase, totalKLAY)
+		if err != nil {
+			log.Printf("%v: charge newCoinbase fail: %v\n", os.Getpid(), err)
+			time.Sleep(1000 * time.Millisecond)
+			continue
+		}
+
+		log.Printf("%v : charge newCoinbase: %v, Txhash=%v\n", os.Getpid(), scNewCoinbase.GetAddress().String(), tx.Hash().String())
+
+		getReceipt := false
+		// After this loop waiting for 10 sec, It will retry to charge with new nonce.
+		// it means another node stole the nonce.
+		for i := 0; i < 5; i++ {
+			time.Sleep(2000 * time.Millisecond)
+
+			val, err := scNewCoinbase.GetBalance()
+			if err == nil {
+				if val.Cmp(big.NewInt(0)) == 1 {
+					getReceipt = true
+					log.Printf("%v : charge newCoinbase success: %v, balance=%v peb\n", os.Getpid(), scNewCoinbase.GetAddress().String(), val.String())
+					break
+				}
+				log.Printf("%v : charge newCoinbase waiting: %v\n", os.Getpid(), scNewCoinbase.GetAddress().String())
+			} else {
+				log.Printf("%v : check banalce err: %v\n", os.Getpid(), err)
+			}
+		}
+
+		if getReceipt {
+			break
+		}
+	}
+
+	println("Parent/Child chain Account Group Preparation...")
+	for i := 0; i < nUser; i++ {
+		cAcc, pAcc := account.NewPairAccount(scBackend, mcBackend)
+		accGrpMc = append(accGrpMc, pAcc)
+		accGrpSc = append(accGrpSc, cAcc)
+		fmt.Printf("%v\n", accGrpMc[i].GetAddress().String())
 	}
 }
 
 func initArgs(tcNames string) {
-	chargeKLAYAmount := 1000000000
-	gEndpointPtr := flag.String("endpoint", "http://localhost:8545", "Target EndPoint")
-	nUserForSignedPtr := flag.Int("vusigned", nUserForSigned, "num of test account for signed Tx TC")
-	nUserForUnsignedPtr := flag.Int("vuunsigned", nUserForUnsigned, "num of test account for unsigned Tx TC")
-	activeUserPercentPtr := flag.Int("activepercent", activeUserPercent, "percent of active accounts")
-	keyPtr := flag.String("key", "", "privatekey of coinbase")
-	chargeKLAYAmountPtr := flag.Int("charge", chargeKLAYAmount, "charging amount for each test account in KLAY")
-	versionPtr := flag.Bool("version", false, "show version number")
+	mcEndpointPtr := flag.String("mcEndpoint", "http://localhost:8545", "Target Main chain EndPoint")
+	mcIPPtr := flag.String("mcIP", "127.0.0.1", "Target Main chain EndPoint's IP")
+	scEndpointPtr := flag.String("scEndpoint", "http://localhost:7545", "Target Service chain EndPoint")
+
+	nUserPtr := flag.Int("numUser", nUser, "num of test accounts")
+	subBridgesPtr := flag.String("subbridges", "http://localhost:", "sub-bridge node EndPoint")
+
+	mcKeyPtr := flag.String("mcKey", "", "privatekey of main chain coinbase")
+	scKeyPtr := flag.String("scKey", "", "privatekey of service chain coinbase")
+
+	operatorThresholdPtr := flag.Uint("threshold", 1, "operator threshold of bridge contracts")
+
 	flag.StringVar(&tcStr, "tc", tcNames, "tasks which user want to run, multiple tasks are separated by comma.")
 
 	flag.Parse()
 
-	if *versionPtr || (len(os.Args) >= 2 && os.Args[1] == "version") {
-		printVersion()
-		os.Exit(0)
+	if *mcKeyPtr == "" {
+		log.Fatal("mcKey argument is not defined. You should set the key for coinbase.\n example) klayslave -mcKeyPtr='2ef07640fd8d3f568c23185799ee92e0154bf08ccfe5c509466d1d40baca3430'")
 	}
 
-	if *keyPtr == "" {
-		log.Fatal("key argument is not defined. You should set the key for coinbase.\n example) klaytc -key='2ef07640fd8d3f568c23185799ee92e0154bf08ccfe5c509466d1d40baca3430'")
+	if *scKeyPtr == "" {
+		log.Fatal("scKey argument is not defined. You should set the key for coinbase.\n example) klayslave -scKeyPtr='2ef07640fd8d3f568c23185799ee92e0154bf08ccfe5c509466d1d40baca3430'")
 	}
 
 	// for TC Selection
@@ -461,79 +327,27 @@ func initArgs(tcNames string) {
 		tcStrList = strings.Split(tcStr, ",")
 	}
 
-	gEndpoint = *gEndpointPtr
+	mcEndpoint = *mcEndpointPtr
+	mcIP = *mcIPPtr
+	scEndpoint = *scEndpointPtr
 
-	nUserForSigned = *nUserForSignedPtr
-	nUserForUnsigned = *nUserForUnsignedPtr
-	activeUserPercent = *activeUserPercentPtr
-	coinbasePrivatekey = *keyPtr
-	chargeKLAYAmount = *chargeKLAYAmountPtr
-	chargeValue = new(big.Int)
-	chargeValue.Set(new(big.Int).Mul(big.NewInt(int64(chargeKLAYAmount)), big.NewInt(params.KLAY)))
+	nUser = *nUserPtr
+	subBridges = strings.Split(*subBridgesPtr, ",")
+
+	mcCoinbasePrivatekey = *mcKeyPtr
+	scCoinbasePrivatekey = *scKeyPtr
+
+	operatorThreshold = uint8(*operatorThresholdPtr)
 
 	fmt.Println("Arguments are set like the following:")
-	fmt.Printf("- Target EndPoint = %v\n", gEndpoint)
-	fmt.Printf("- nUserForSigned = %v\n", nUserForSigned)
-	fmt.Printf("- nUserForUnsigned = %v\n", nUserForUnsigned)
-	fmt.Printf("- activeUserPercent = %v\n", activeUserPercent)
-	fmt.Printf("- coinbasePrivatekey = %v\n", coinbasePrivatekey)
-	fmt.Printf("- charging KLAY Amount = %v\n", chargeKLAYAmount)
+	fmt.Printf("- Target mcEndPoint = %v\n", mcEndpoint)
+	fmt.Printf("- Target scEndPoint = %v\n", scEndpoint)
+	fmt.Printf("- nUser Main chain = %v\n", nUser)
+	fmt.Printf("- subBridges = %v\n", *subBridgesPtr)
+	fmt.Printf("- nUser Service chain = %v\n", nUserSc)
+	fmt.Printf("- Main chain Key = %v\n", mcCoinbasePrivatekey)
+	fmt.Printf("- Service chain Key = %v\n", scCoinbasePrivatekey)
 	fmt.Printf("- tc = %v\n", tcStr)
-}
-
-func updateChainID() {
-	fmt.Println("Updating ChainID from RPC")
-	for {
-		ctx := context.Background()
-		chainID, err := gCli.ChainID(ctx)
-
-		if err == nil {
-			fmt.Println("chainID :", chainID)
-			account.SetChainID(chainID)
-			break
-		}
-		fmt.Println("Retrying updating chainID... ERR: ", err)
-
-		time.Sleep(2 * time.Second)
-	}
-}
-
-func updateGasPrice() {
-	gasPrice = big.NewInt(0)
-	fmt.Println("Updating GasPrice from RPC")
-	for {
-		ctx := context.Background()
-		gp, err := gCli.SuggestGasPrice(ctx)
-
-		if err == nil {
-			gasPrice = gp
-			fmt.Println("gas price :", gasPrice.String())
-			break
-		}
-		fmt.Println("Retrying updating GasPrice... ERR: ", err)
-
-		time.Sleep(2 * time.Second)
-	}
-	account.SetGasPrice(gasPrice)
-}
-
-func updateBaseFee() {
-	baseFee = big.NewInt(0)
-	// TODO: Uncomment below when klaytn 1.8.0 is released.
-	//for {
-	//	ctx := context.Background()
-	//	h, err := gCli.HeaderByNumber(ctx, nil)
-	//
-	//	if err == nil {
-	//		baseFee = h.BaseFee
-	//		fmt.Println("base fee :", baseFee.String())
-	//		break
-	//	}
-	//	fmt.Println("Retrying updating BaseFee... ERR: ", err)
-	//
-	//	time.Sleep(2 * time.Second)
-	//}
-	account.SetBaseFee(baseFee)
 }
 
 func setRLimit(resourceType int, val uint64) error {
@@ -553,620 +367,83 @@ func setRLimit(resourceType int, val uint64) error {
 	return nil
 }
 
+
 // initTCList initializes TCs and returns a slice of TCs.
 func initTCList() (taskSet []*ExtendedTask) {
 
 	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "analyticTx",
-		Weight:  10,
-		Fn:      analyticTC.Run,
-		Init:    analyticTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
+		Name:     "scKLAYTransferTc",
+		Weight:   10,
+		Fn:       scKLAYTransferTc.Run,
+		Init:     scKLAYTransferTc.Init,
+		AccGrpMc: accGrpMc,
+		AccGrpSc: accGrpSc,
 	})
 
 	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "analyticQueryLargestAccBalTx",
-		Weight:  10,
-		Fn:      analyticTC.QueryLargestAccBal,
-		Init:    analyticTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
+		Name:     "scKLAYTransferFallbackTc",
+		Weight:   10,
+		Fn:       scKLAYTransferFallbackTc.Run,
+		Init:     scKLAYTransferFallbackTc.Init,
+		AccGrpMc: accGrpMc,
+		AccGrpSc: accGrpSc,
 	})
 
 	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "analyticQueryLargestTxValTx",
-		Weight:  10,
-		Fn:      analyticTC.QueryLargestTxVal,
-		Init:    analyticTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
+		Name:     "scTokenTransferTc",
+		Weight:   10,
+		Fn:       scTokenTransferTc.Run,
+		Init:     scTokenTransferTc.Init,
+		AccGrpMc: accGrpMc,
+		AccGrpSc: accGrpSc,
 	})
 
 	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "analyticQueryTotalTxValTx",
-		Weight:  10,
-		Fn:      analyticTC.QueryTotalTxVal,
-		Init:    analyticTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
+		Name:     "scKLAYTransferTcWithCheck",
+		Weight:   10,
+		Fn:       scKLAYTransferTcWithCheck.Run,
+		Init:     scKLAYTransferTcWithCheck.Init,
+		AccGrpMc: accGrpMc,
+		AccGrpSc: accGrpSc,
 	})
 
 	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "cpuHeavyTx",
-		Weight:  10,
-		Fn:      cpuHeavyTC.Run,
-		Init:    cpuHeavyTC.Init,
-		AccGrp:  accGrpForSignedTx, //[nUserForSigned/2:],
-		EndPint: gEndpoint,
+		Name:     "scTokenTransferTcWithCheck",
+		Weight:   10,
+		Fn:       scTokenTransferTcWithCheck.Run,
+		Init:     scTokenTransferTcWithCheck.Init,
+		AccGrpMc: accGrpMc,
+		AccGrpSc: accGrpSc,
 	})
 
 	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "doNothingTx",
-		Weight:  10,
-		Fn:      doNothingTC.Run,
-		Init:    doNothingTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
+		Name:     "scTokenTransfer2StepTcWithCheck",
+		Weight:   10,
+		Fn:       scTokenTransfer2StepTcWithCheck.Run,
+		Init:     scTokenTransfer2StepTcWithCheck.Init,
+		AccGrpMc: accGrpMc,
+		AccGrpSc: accGrpSc,
 	})
 
 	taskSet = append(taskSet, &ExtendedTask{
-		Name:    internalTxTC.Name,
-		Weight:  10,
-		Fn:      internalTxTC.Run,
-		Init:    internalTxTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
+		Name:     "scNFTTransferTcWithCheck",
+		Weight:   10,
+		Fn:       scNFTTransferTcWithCheck.Run,
+		Init:     scNFTTransferTcWithCheck.Init,
+		AccGrpMc: accGrpMc,
+		AccGrpSc: accGrpSc,
 	})
 
 	taskSet = append(taskSet, &ExtendedTask{
-		Name:    internalTxTC.NameMintNFT,
-		Weight:  10,
-		Fn:      internalTxTC.RunMintNFT,
-		Init:    internalTxTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "ioHeavyTx",
-		Weight:  10,
-		Fn:      ioHeavyTC.Run,
-		Init:    ioHeavyTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "ioHeavyScanTx",
-		Weight:  10,
-		Fn:      ioHeavyTC.Scan,
-		Init:    ioHeavyTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "ioHeavyWriteTx",
-		Weight:  10,
-		Fn:      ioHeavyTC.Write,
-		Init:    ioHeavyTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "largeMemoTC",
-		Weight:  10,
-		Fn:      largeMemoTC.Run,
-		Init:    largeMemoTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    receiptCheckTc.Name,
-		Weight:  10,
-		Fn:      receiptCheckTc.Run,
-		Init:    receiptCheckTc.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "smallBankTx",
-		Weight:  10,
-		Fn:      smallBankTC.Run,
-		Init:    smallBankTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "smallBankAlmagateTx",
-		Weight:  10,
-		Fn:      smallBankTC.Almagate,
-		Init:    smallBankTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "smallBankGetBalanceTx",
-		Weight:  10,
-		Fn:      smallBankTC.GetBalance,
-		Init:    smallBankTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "smallBankSendPaymentTx",
-		Weight:  10,
-		Fn:      smallBankTC.SendPayment,
-		Init:    smallBankTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "smallBankUpdateBalanceTx",
-		Weight:  10,
-		Fn:      smallBankTC.UpdateBalance,
-		Init:    smallBankTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "smallBankUpdateSavingTx",
-		Weight:  10,
-		Fn:      smallBankTC.UpdateSaving,
-		Init:    smallBankTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "smallBankWriteCheckTx",
-		Weight:  10,
-		Fn:      smallBankTC.WriteCheck,
-		Init:    smallBankTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "transferSignedTx",
-		Weight:  10,
-		Fn:      transferSignedTc.Run,
-		Init:    transferSignedTc.Init,
-		AccGrp:  accGrpForSignedTx, //[:nUserForSigned/2-1],
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "newValueTransferTC",
-		Weight:  10,
-		Fn:      newValueTransferTC.Run,
-		Init:    newValueTransferTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "newValueTransferWithCancelTC",
-		Weight:  10,
-		Fn:      newValueTransferWithCancelTC.Run,
-		Init:    newValueTransferWithCancelTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "newFeeDelegatedValueTransferTC",
-		Weight:  10,
-		Fn:      newFeeDelegatedValueTransferTC.Run,
-		Init:    newFeeDelegatedValueTransferTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "newFeeDelegatedValueTransferWithRatioTC",
-		Weight:  10,
-		Fn:      newFeeDelegatedValueTransferWithRatioTC.Run,
-		Init:    newFeeDelegatedValueTransferWithRatioTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "newValueTransferMemoTC",
-		Weight:  10,
-		Fn:      newValueTransferMemoTC.Run,
-		Init:    newValueTransferMemoTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "newValueTransferLargeMemoTC",
-		Weight:  10,
-		Fn:      newValueTransferLargeMemoTC.Run,
-		Init:    newValueTransferLargeMemoTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "newValueTransferSmallMemoTC",
-		Weight:  10,
-		Fn:      newValueTransferSmallMemoTC.Run,
-		Init:    newValueTransferSmallMemoTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "newFeeDelegatedValueTransferMemoTC",
-		Weight:  10,
-		Fn:      newFeeDelegatedValueTransferMemoTC.Run,
-		Init:    newFeeDelegatedValueTransferMemoTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "newFeeDelegatedValueTransferMemoWithRatioTC",
-		Weight:  10,
-		Fn:      newFeeDelegatedValueTransferMemoWithRatioTC.Run,
-		Init:    newFeeDelegatedValueTransferMemoWithRatioTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "newAccountCreationTC",
-		Weight:  10,
-		Fn:      newAccountCreationTC.Run,
-		Init:    newAccountCreationTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "newAccountUpdateTC",
-		Weight:  10,
-		Fn:      newAccountUpdateTC.Run,
-		Init:    newAccountUpdateTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "newFeeDelegatedAccountUpdateTC",
-		Weight:  10,
-		Fn:      newFeeDelegatedAccountUpdateTC.Run,
-		Init:    newFeeDelegatedAccountUpdateTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "newFeeDelegatedAccountUpdateWithRatioTC",
-		Weight:  10,
-		Fn:      newFeeDelegatedAccountUpdateWithRatioTC.Run,
-		Init:    newFeeDelegatedAccountUpdateWithRatioTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "newSmartContractDeployTC",
-		Weight:  10,
-		Fn:      newSmartContractDeployTC.Run,
-		Init:    newSmartContractDeployTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "newFeeDelegatedSmartContractDeployTC",
-		Weight:  10,
-		Fn:      newFeeDelegatedSmartContractDeployTC.Run,
-		Init:    newFeeDelegatedSmartContractDeployTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "newFeeDelegatedSmartContractDeployWithRatioTC",
-		Weight:  10,
-		Fn:      newFeeDelegatedSmartContractDeployWithRatioTC.Run,
-		Init:    newFeeDelegatedSmartContractDeployWithRatioTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "newSmartContractExecutionTC",
-		Weight:  10,
-		Fn:      newSmartContractExecutionTC.Run,
-		Init:    newSmartContractExecutionTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    storageTrieWriteTC.Name,
-		Weight:  10,
-		Fn:      storageTrieWriteTC.Run,
-		Init:    storageTrieWriteTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "newFeeDelegatedSmartContractExecutionTC",
-		Weight:  10,
-		Fn:      newFeeDelegatedSmartContractExecutionTC.Run,
-		Init:    newFeeDelegatedSmartContractExecutionTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "newFeeDelegatedSmartContractExecutionWithRatioTC",
-		Weight:  10,
-		Fn:      newFeeDelegatedSmartContractExecutionWithRatioTC.Run,
-		Init:    newFeeDelegatedSmartContractExecutionWithRatioTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "newCancelTC",
-		Weight:  10,
-		Fn:      newCancelTC.Run,
-		Init:    newCancelTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "newFeeDelegatedCancelTC",
-		Weight:  10,
-		Fn:      newFeeDelegatedCancelTC.Run,
-		Init:    newFeeDelegatedCancelTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "newFeeDelegatedCancelWithRatioTC",
-		Weight:  10,
-		Fn:      newFeeDelegatedCancelWithRatioTC.Run,
-		Init:    newFeeDelegatedCancelWithRatioTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "transferSignedWithCheckTx",
-		Weight:  10,
-		Fn:      transferSignedWithCheckTc.Run,
-		Init:    transferSignedWithCheckTc.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "transferUnsignedTx",
-		Weight:  10,
-		Fn:      transferUnsignedTc.Run,
-		Init:    transferUnsignedTc.Init,
-		AccGrp:  accGrpForUnsignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "userStorageSetTx",
-		Weight:  10,
-		Fn:      userStorageTC.RunSet,
-		Init:    userStorageTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "userStorageSetGetTx",
-		Weight:  10,
-		Fn:      userStorageTC.RunSetGet,
-		Init:    userStorageTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "ycsbTx",
-		Weight:  10,
-		Fn:      ycsbTC.Run,
-		Init:    ycsbTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "ycsbGetTx",
-		Weight:  10,
-		Fn:      ycsbTC.Get,
-		Init:    ycsbTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "ycsbSetTx",
-		Weight:  10,
-		Fn:      ycsbTC.Set,
-		Init:    ycsbTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    erc20TransferTC.Name,
-		Weight:  10,
-		Fn:      erc20TransferTC.Run,
-		Init:    erc20TransferTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    erc721TransferTC.Name,
-		Weight:  10,
-		Fn:      erc721TransferTC.Run,
-		Init:    erc721TransferTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "readGasPrice",
-		Weight:  10,
-		Fn:      readApiCallTC.GasPrice,
-		Init:    readApiCallTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "readBlockNumber",
-		Weight:  10,
-		Fn:      readApiCallTC.BlockNumber,
-		Init:    readApiCallTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "readGetBlockByNumber",
-		Weight:  10,
-		Fn:      readApiCallTC.GetBlockByNumber,
-		Init:    readApiCallTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "readGetAccount",
-		Weight:  10,
-		Fn:      readApiCallTC.GetAccount,
-		Init:    readApiCallTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "readGetBlockWithConsensusInfoByNumber",
-		Weight:  10,
-		Fn:      readApiCallTC.GetBlockWithConsensusInfoByNumber,
-		Init:    readApiCallTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "readGetStorageAt",
-		Weight:  10,
-		Fn:      readApiCallContractTC.GetStorageAt,
-		Init:    readApiCallContractTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "readCall",
-		Weight:  10,
-		Fn:      readApiCallContractTC.Call,
-		Init:    readApiCallContractTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "readEstimateGas",
-		Weight:  10,
-		Fn:      readApiCallContractTC.EstimateGas,
-		Init:    readApiCallContractTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "ethereumTxLegacyTC",
-		Weight:  10,
-		Fn:      ethereumTxLegacyTC.Run,
-		Init:    ethereumTxLegacyTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "ethereumTxAccessListTC",
-		Weight:  10,
-		Fn:      ethereumTxAccessListTC.Run,
-		Init:    ethereumTxAccessListTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "ethereumTxDynamicFeeTC",
-		Weight:  10,
-		Fn:      ethereumTxDynamicFeeTC.Run,
-		Init:    ethereumTxDynamicFeeTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "newEthereumAccessListTC",
-		Weight:  10,
-		Fn:      newEthereumAccessListTC.Run,
-		Init:    newEthereumAccessListTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
-	})
-
-	taskSet = append(taskSet, &ExtendedTask{
-		Name:    "newEthereumDynamicFeeTC",
-		Weight:  10,
-		Fn:      newEthereumDynamicFeeTC.Run,
-		Init:    newEthereumDynamicFeeTC.Init,
-		AccGrp:  accGrpForSignedTx,
-		EndPint: gEndpoint,
+		Name:     "scNFTTransfer2StepTcWithCheck",
+		Weight:   10,
+		Fn:       scNFTTransfer2StepTcWithCheck.Run,
+		Init:     scNFTTransfer2StepTcWithCheck.Init,
+		AccGrpMc: accGrpMc,
+		AccGrpSc: accGrpSc,
 	})
 
 	return taskSet
-}
-
-func printVersion() {
-	version := Version
-	if len(Commit) >= 7 {
-		version += "-" + Commit[:7]
-	}
-	if Tag != "" && Tag != "undefined" {
-		version = Tag
-	}
-	fmt.Printf("Version :\t%s\n", version)
-	fmt.Printf("git.Branch :\t%s\n", Branch)
-	fmt.Printf("git.Commit :\t%s\n", Commit)
-	fmt.Printf("git.Tag :\t%s\n", Tag)
-	fmt.Printf("build.Date :\t%s\n", BuildDate)
-	fmt.Printf("build.User :\t%s\n", BuildUser)
 }
 
 func main() {
@@ -1183,27 +460,27 @@ func main() {
 
 	initArgs(tcNames)
 
-	// Create Cli pool
-	gCli = Create(gEndpoint)
-
-	// Update chainID
-	updateChainID()
-
-	// Update gasPrice
-	updateGasPrice()
-
-	// Update baseFee
-	updateBaseFee()
+	// Create main/service chain client
+	mcBackend = account.NewBackend(mcEndpoint)
+	scBackend = account.NewBackend(scEndpoint)
+	for _, subBridge := range subBridges {
+		subBridgeBackends = append(subBridgeBackends, account.NewBackend(subBridge))
+	}
 
 	// Set coinbase & Create Test Account
+	KlayForAcc = new(big.Int)
+	KlayForAcc.SetString("1000000000000000000000000", 10) //1e24 = 1,000,000 KLAY
+
+	TokenForAcc = new(big.Int)
+	TokenForAcc.SetString("1000000000000", 10)
+
 	prepareAccounts()
 
-	// Call initTCList again to actually define all TCs
 	taskSet = initTCList()
 
 	var filteredTask []*ExtendedTask
 
-	println("Adding tasks")
+	println("Adding & Initializing tasks")
 	for _, task := range taskSet {
 		if task.Name == "" {
 			continue
@@ -1222,45 +499,230 @@ func main() {
 		}
 	}
 
-	// Import/Unlock Account on the node if there is a task to use unsigned account group.
-	for _, task := range filteredTask {
-		if task.AccGrp[0] == accGrpForUnsignedTx[0] {
-			for _, acc := range task.AccGrp {
-				acc.ImportUnLockAccount(gEndpoint)
-			}
-			break // to import/unlock once.
+	if len(filteredTask) == 0 {
+		log.Fatal("There is no valid TC.")
+	}
+
+	///////////////////////////
+	// Temporal code /////////
+	// TODO-Klaytn the following procedure will be omitted.
+
+	ctx := context.Background()
+	// deploy bridge
+	scBridgeAddr, mcBridgeAddr, err := subBridgeBackends[0].Client.BridgeDeployBridge(ctx)
+	if err != nil {
+		log.Fatal("Failed to deploy bridge contract", err)
+	}
+
+	err = subBridgeBackends[0].BridgeSubscribeBridge(ctx, scBridgeAddr, mcBridgeAddr)
+	if err != nil {
+		log.Fatal("Failed to SubscribeEventBridge", "err", err)
+	}
+
+	_, err = subBridgeBackends[0].BridgeSetValueTransferOperatorThreshold(ctx, scBridgeAddr, operatorThreshold)
+	if err != nil {
+		log.Fatal("Failed to BridgeSetValueTransferOperatorThreshold", "err", err)
+	}
+
+	_, err = subBridgeBackends[0].BridgeSetValueTransferOperatorThreshold(ctx, mcBridgeAddr, operatorThreshold)
+	if err != nil {
+		log.Fatal("Failed to BridgeSetValueTransferOperatorThreshold", "err", err)
+	}
+
+	for i := 1; i < len(subBridgeBackends); i++ {
+		err := subBridgeBackends[i].Client.BridgeRegisterBridge(ctx, scBridgeAddr, mcBridgeAddr)
+		if err != nil {
+			log.Fatal("Failed to BridgeRegisterBridge", "err", err)
+		}
+
+		err = subBridgeBackends[i].Client.BridgeSubscribeBridge(ctx, scBridgeAddr, mcBridgeAddr)
+		if err != nil {
+			log.Fatal("Failed to BridgeSubscribeBridge", "err", err)
+		}
+
+		pOperator, err := subBridgeBackends[i].Client.BridgeGetParentOperatorAddr(ctx)
+		if err != nil {
+			log.Fatal("Failed to BridgeGetParentOperatorAddr", "err", err)
+		}
+
+		cOperator, err := subBridgeBackends[i].Client.BridgeGetChildOperatorAddr(ctx)
+		if err != nil {
+			log.Fatal("Failed to BridgeGetChildOperatorAddr", "err", err)
+		}
+
+		// Register other sub-bridge's operators
+		_, err = subBridgeBackends[0].BridgeRegisterOperator(ctx, mcBridgeAddr, pOperator)
+		if err != nil {
+			log.Fatal("Failed to BridgeRegisterOperator", "err", err)
+		}
+
+		_, err = subBridgeBackends[0].BridgeRegisterOperator(ctx, scBridgeAddr, cOperator)
+		if err != nil {
+			log.Fatal("Failed to BridgeRegisterOperator", "err", err)
 		}
 	}
+
+	// deploy token contract
+	mcTokenAddr, tx, mcToken, err := sctoken.DeployServiceChainToken(mcNewCoinbase.GetTransactOpts(account.MagicGasLimit), mcBackend, mcBridgeAddr)
+	if err != nil {
+		log.Fatal("Failed to DeployServiceChainToken on service chain", "err", err)
+	}
+	_, err = bind.WaitDeployed(ctx, mcBackend, tx)
+	if err != nil {
+		log.Fatal("Failed to WaitDeployed the token contract on service chain", "err", err)
+	}
+	mcNewCoinbase.UpdateNonce()
+
+	scTokenAddr, tx, scToken, err := sctoken.DeployServiceChainToken(scNewCoinbase.GetTransactOpts(account.MagicGasLimit), scBackend, scBridgeAddr)
+	if err != nil {
+		log.Fatal("Failed to DeployServiceChainToken on service chain", "err", err)
+	}
+	_, err = bind.WaitDeployed(ctx, scBackend, tx)
+	if err != nil {
+		log.Fatal("Failed to WaitDeployed the token contract on service chain", "err", err)
+	}
+	scNewCoinbase.UpdateNonce()
+
+	tx, err = scToken.AddMinter(scNewCoinbase.GetTransactOpts(account.MagicGasLimit), scBridgeAddr)
+	r, err := bind.WaitMined(ctx, scBackend, tx)
+	if r.Status != types.ReceiptStatusSuccessful {
+		log.Fatal("Failed to WaitMined for AddMinter. Reverted Receipt")
+	}
+	if err != nil {
+		log.Fatal("Failed to WaitMined for AddMinter", "err", err)
+	}
+	scNewCoinbase.UpdateNonce()
+
+	// Register the pair of token on service chain bridge.
+	err = subBridgeBackends[0].BridgeRegisterTokenContract(ctx, scBridgeAddr, mcBridgeAddr, scTokenAddr, mcTokenAddr)
+	if err != nil {
+		log.Fatal("Failed to BridgeRegisterTokenContract", "err", err)
+	}
+
+	// deploy NFT contract
+	mcNFTAddr, tx, mcNFT, err := scnft.DeployServiceChainNFT(mcNewCoinbase.GetTransactOpts(account.MagicGasLimit), mcBackend, mcBridgeAddr)
+	if err != nil {
+		log.Fatal("Failed to DeployServiceChainNFT on service chain", "err", err)
+	}
+
+	_, err = bind.WaitDeployed(ctx, mcBackend, tx)
+	if err != nil {
+		log.Fatal("Failed to WaitDeployed the NFT contract on service chain", "err", err)
+	}
+	mcNewCoinbase.UpdateNonce()
+
+	scNFTAddr, tx, scNFT, err := scnft.DeployServiceChainNFT(scNewCoinbase.GetTransactOpts(account.MagicGasLimit), scBackend, scBridgeAddr)
+	if err != nil {
+		log.Fatal("Failed to DeployServiceChainNFT on service chain", "err", err)
+	}
+	_, err = bind.WaitDeployed(ctx, scBackend, tx)
+	if err != nil {
+		log.Fatal("Failed to WaitDeployed the NFT contract on service chain", "err", err)
+	}
+	scNewCoinbase.UpdateNonce()
+
+	tx, err = scNFT.AddMinter(scNewCoinbase.GetTransactOpts(account.MagicGasLimit), scBridgeAddr)
+	r, err = bind.WaitMined(ctx, scBackend, tx)
+	if r.Status != types.ReceiptStatusSuccessful {
+		log.Fatal("Failed to WaitMined for AddMinter. Reverted Receipt")
+	}
+	if err != nil {
+		log.Fatal("Failed to WaitDeployed for AddMinter", "err", err)
+	}
+	scNewCoinbase.UpdateNonce()
+
+	// Register the pair of NFT on service chain bridge.
+	err = subBridgeBackends[0].BridgeRegisterTokenContract(ctx, scBridgeAddr, mcBridgeAddr, scNFTAddr, mcNFTAddr)
+	if err != nil {
+		log.Fatal("Failed to BridgeRegisterContract", "err", err)
+	}
+
+	// Charge KLAY to bridge
+	println("Charge KLAY to bridge")
+	klayForBridge := new(big.Int)
+	klayForBridge.Mul(KlayForAcc, big.NewInt(int64(nUser+nUserSc+1)))
+
+	mcNewCoinbase.ChargeBridge(mcBridgeAddr, klayForBridge)
+	scNewCoinbase.ChargeBridge(scBridgeAddr, klayForBridge)
+
+	// Charge Token to bridge
+	println("Charge Token to bridge")
+	tokenForBridge := new(big.Int).Mul(TokenForAcc, big.NewInt(int64(nUser+nUserSc+1)))
+	mcToken.Transfer(mcNewCoinbase.GetTransactOpts(account.MagicGasLimit), mcBridgeAddr, tokenForBridge)
+	mcNewCoinbase.UpdateNonce()
+	scToken.Transfer(scNewCoinbase.GetTransactOpts(account.MagicGasLimit), scBridgeAddr, tokenForBridge)
+	scNewCoinbase.UpdateNonce()
+
+	// Charge NFT to bridge
+	println("Charge NFT to bridge")
+	numNFTPerAccount := uint64(100)
+	mcNFTStartIDX := big.NewInt(0)
+	mcNFTEndIDX := new(big.Int).SetUint64(uint64(nUser) * numNFTPerAccount)
+	scNFTStartIDX := mcNFTEndIDX
+	scNFTEndIDX := new(big.Int).SetUint64(uint64(nUser+nUserSc) * numNFTPerAccount)
+
+	chunk := numNFTPerAccount
+
+	var txs []*types.Transaction
+	for start := scNFTStartIDX.Uint64(); start+chunk <= scNFTEndIDX.Uint64(); start += chunk {
+		st := new(big.Int).SetUint64(start)
+		en := new(big.Int).SetUint64(start + chunk)
+		tx, err := mcNFT.RegisterBulk(mcNewCoinbase.GetTransactOpts(account.MagicGasLimit), mcBridgeAddr, st, en)
+		if err != nil {
+			log.Fatal("Failed to RegisterBulk", "err", err)
+		}
+		txs = append(txs, tx)
+		log.Printf("Charge NFT to mcbridge hash(%v), start(%v), end(%v)\n", tx.Hash().String(), st.String(), en.String())
+		mcNewCoinbase.UpdateNonce()
+	}
+
+	for _, tx := range txs {
+		receipt, err := bind.WaitMined(context.Background(), mcBackend, tx)
+		if err != nil || receipt.Status != types.ReceiptStatusSuccessful {
+			log.Fatal("Failed to RegisterBulk", "err", err, "txHash", tx.Hash().String())
+		}
+	}
+
+	// This code is not necessary for mint-burn mode.
+	//for start := mcNFTStartIDX.Uint64(); start+chunk <= mcNFTEndIDX.Uint64(); start += chunk {
+	//	st := new(big.Int).SetUint64(start)
+	//	en := new(big.Int).SetUint64(start + chunk)
+	//	tx, err := scNFT.RegisterBulk(scNewCoinbase.GetTransactOpts(account.MagicGasLimit), scBridgeAddr, st, en)
+	//	if err != nil {
+	//		log.Fatal("Failed to RegisterBulk", "err", err)
+	//	}
+	//	log.Printf("Charge NFT to scbridge hash(%v), start(%v), end(%v)\n", tx.Hash().String(), st.String(), en.String())
+	//	scNewCoinbase.UpdateNonce()
+	//}
 
 	// Charge Accounts
-	accGrp := make(map[common.Address]*account.Account)
+	mcAccGrp := make(map[common.Address]*account.Account)
+	scAccGrp := make(map[common.Address]*account.Account)
 	for _, task := range filteredTask {
-		for _, acc := range task.AccGrp {
-			_, exist := accGrp[acc.GetAddress()]
+		for _, acc := range task.AccGrpMc {
+			_, exist := mcAccGrp[acc.GetAddress()]
 			if !exist {
-				accGrp[acc.GetAddress()] = acc
+				mcAccGrp[acc.GetAddress()] = acc
+			}
+		}
+
+		for _, acc := range task.AccGrpSc {
+			_, exist := scAccGrp[acc.GetAddress()]
+			if !exist {
+				scAccGrp[acc.GetAddress()] = acc
 			}
 		}
 
 	}
 
-	if len(chargeValue.Bits()) != 0 {
-		prepareTestAccountsAndContracts(accGrp)
-	}
+	chargeTestAccounts(mcNewCoinbase, mcAccGrp)
+	chargeTestAccounts(scNewCoinbase, scAccGrp)
 
-	// After charging accounts, cut the slice to the desired length, calculated by ActiveAccountPercent.
-	for _, task := range filteredTask {
-		if activeUserPercent > 100 {
-			log.Fatalf("ActiveAccountPercent should be less than or equal to 100, but it is %v", activeUserPercent)
-		}
-		numActiveAccounts := len(task.AccGrp) * activeUserPercent / 100
-		// Not to assign 0 account for some cases.
-		if numActiveAccounts == 0 {
-			numActiveAccounts = 1
-		}
-		task.AccGrp = task.AccGrp[:numActiveAccounts]
-		prepareERC721Transfer(task.AccGrp)
-	}
+	chargeTokenTestAccounts(mcNewCoinbase, mcAccGrp, mcTokenAddr)
+	chargeTokenTestAccounts(scNewCoinbase, scAccGrp, scTokenAddr)
+
+	chargeNFTTestAccounts(mcNewCoinbase, mcAccGrp, mcNFTAddr, mcNFTStartIDX.Uint64(), numNFTPerAccount)
+	chargeNFTTestAccounts(scNewCoinbase, scAccGrp, scNFTAddr, scNFTStartIDX.Uint64(), numNFTPerAccount)
 
 	if len(filteredTask) == 0 {
 		log.Fatal("No Tc is set. Please set TcList. \nExample argument) -tc='" + tcNames + "'")
@@ -1269,7 +731,7 @@ func main() {
 	println("Initializing tasks")
 	var filteredBoomerTask []*boomer.Task
 	for _, task := range filteredTask {
-		task.Init(task.AccGrp, task.EndPint, gasPrice)
+		task.Init(task.AccGrpMc, task.AccGrpSc, mcBridgeAddr, scBridgeAddr, mcTokenAddr, scTokenAddr, mcNFTAddr, scNFTAddr)
 		filteredBoomerTask = append(filteredBoomerTask, &boomer.Task{task.Weight, task.Fn, task.Name})
 		println("=> " + task.Name + " task is initialized.")
 	}
