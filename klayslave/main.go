@@ -301,7 +301,8 @@ func initArgs(tcNames string) {
 	mcIPPtr := flag.String("mcIP", "127.0.0.1", "Target Main chain EndPoint's IP")
 	scEndpointPtr := flag.String("scEndpoint", "http://localhost:7545", "Target Service chain EndPoint")
 
-	nUserPtr := flag.Int("numUser", nUser, "num of test accounts")
+	nUserPtr := flag.Int("numUser", nUser, "num of test accounts at main chain")
+	nUserScPtr := flag.Int("numScUser", nUserSc, "num of test accounts at service chain")
 	subBridgesPtr := flag.String("subbridges", "http://localhost:", "sub-bridge node EndPoint")
 
 	mcKeyPtr := flag.String("mcKey", "", "privatekey of main chain coinbase")
@@ -332,6 +333,7 @@ func initArgs(tcNames string) {
 	scEndpoint = *scEndpointPtr
 
 	nUser = *nUserPtr
+	nUserSc = *nUserScPtr
 	subBridges = strings.Split(*subBridgesPtr, ",")
 
 	mcCoinbasePrivatekey = *mcKeyPtr
