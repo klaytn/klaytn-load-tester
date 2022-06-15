@@ -3,6 +3,7 @@ package scTokenTransferTc
 import (
 	"github.com/klaytn/klaytn-load-tester/klayslave/account"
 	"github.com/klaytn/klaytn/common"
+	"github.com/myzhan/boomer"
 	"math/big"
 	"math/rand"
 )
