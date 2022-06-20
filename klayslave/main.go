@@ -369,7 +369,6 @@ func setRLimit(resourceType int, val uint64) error {
 	return nil
 }
 
-
 // initTCList initializes TCs and returns a slice of TCs.
 func initTCList() (taskSet []*ExtendedTask) {
 
@@ -677,13 +676,14 @@ func main() {
 		log.Printf("Charge NFT to mcbridge hash(%v), start(%v), end(%v)\n", tx.Hash().String(), st.String(), en.String())
 		mcNewCoinbase.UpdateNonce()
 	}
-
+	log.Printf("waitmined start")
 	for _, tx := range txs {
 		receipt, err := bind.WaitMined(context.Background(), mcBackend, tx)
 		if err != nil || receipt.Status != types.ReceiptStatusSuccessful {
 			log.Fatal("Failed to RegisterBulk", "err", err, "txHash", tx.Hash().String())
 		}
 	}
+	log.Printf("waitmined end")
 
 	// This code is not necessary for mint-burn mode.
 	//for start := mcNFTStartIDX.Uint64(); start+chunk <= mcNFTEndIDX.Uint64(); start += chunk {
@@ -698,6 +698,7 @@ func main() {
 	//}
 
 	// Charge Accounts
+	log.Printf("accgrp start")
 	mcAccGrp := make(map[common.Address]*account.Account)
 	scAccGrp := make(map[common.Address]*account.Account)
 	for _, task := range filteredTask {
@@ -716,6 +717,7 @@ func main() {
 		}
 
 	}
+	log.Printf("accgrp end")
 
 	chargeTestAccounts(mcNewCoinbase, mcAccGrp)
 	chargeTestAccounts(scNewCoinbase, scAccGrp)
