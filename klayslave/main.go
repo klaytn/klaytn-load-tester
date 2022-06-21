@@ -664,7 +664,8 @@ func main() {
 
 	chunk := numNFTPerAccount
 
-	var txs []*types.Transaction
+	var lastTx *types.Transaction
+
 	for start := scNFTStartIDX.Uint64(); start+chunk <= scNFTEndIDX.Uint64(); start += chunk {
 		st := new(big.Int).SetUint64(start)
 		en := new(big.Int).SetUint64(start + chunk)
@@ -672,16 +673,14 @@ func main() {
 		if err != nil {
 			log.Fatal("Failed to RegisterBulk", "err", err)
 		}
-		txs = append(txs, tx)
+		lastTx = tx
 		log.Printf("Charge NFT to mcbridge hash(%v), start(%v), end(%v)\n", tx.Hash().String(), st.String(), en.String())
 		mcNewCoinbase.UpdateNonce()
 	}
 	log.Printf("waitmined start")
-	for _, tx := range txs {
-		receipt, err := bind.WaitMined(context.Background(), mcBackend, tx)
-		if err != nil || receipt.Status != types.ReceiptStatusSuccessful {
-			log.Fatal("Failed to RegisterBulk", "err", err, "txHash", tx.Hash().String())
-		}
+	receipt, err := bind.WaitMined(context.Background(), mcBackend, lastTx)
+	if err != nil || receipt.Status != types.ReceiptStatusSuccessful {
+		log.Fatal("Failed to RegisterBulk", "err", err, "txHash", lastTx.Hash().String())
 	}
 	log.Printf("waitmined end")
 
