@@ -1,4 +1,4 @@
-ARG DOCKER_BASE_IMAGE=klaytn/build_base:latest
+ARG DOCKER_BASE_IMAGE=klaytn/build_base:1.1-go1.15.7-solc0.4.24
 
 FROM ${DOCKER_BASE_IMAGE}
 
