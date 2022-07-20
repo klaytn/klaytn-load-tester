@@ -97,12 +97,13 @@ func NewBackend(ep string) *Backend {
 	if err != nil {
 		log.Fatalf("Failed to get ChainID: %v", err)
 	}
-
+	gasPrice := big.NewInt(750000000000) //750 ston = upperbound baseFee
+	/* Deprecated because of KIP-71 hardfork
 	gasPrice, err := cli.SuggestGasPrice(ctx)
 	if err != nil {
 		log.Fatalf("Failed to get SuggestGasPrice: %v", err)
 	}
-
+	*/
 	backend := &Backend{
 		cli,
 		chainID,
