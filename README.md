@@ -67,6 +67,7 @@ Parameters
 * --vusigned : number of accounts for signed transaction to use in test case.
 * --vuunsigned: number of accounts for unsigned transaction to use in test case.
 * --endpoint: klay node rpc endpoint(e.g. http://localhost:8551).
+* --http.maxidleconns: maximum number of idle connections in default http client (default 100).
 
 ## How to contribute?
 * issue: Please make an issue if there's bug, improvement, docs suggestion, etc.
