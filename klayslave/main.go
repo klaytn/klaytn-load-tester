@@ -728,6 +728,7 @@ func main() {
 		chargeNFTTestAccounts(mcNewCoinbase, mcAccGrp, mcNFTAddr, mcNFTStartIDX.Uint64(), numNFTPerAccount)
 	}()
 	go func() {
+		defer wg.Done()
 		chargeTestAccounts(scNewCoinbase, scAccGrp)
 		chargeTokenTestAccounts(scNewCoinbase, scAccGrp, scTokenAddr)
 		chargeNFTTestAccounts(scNewCoinbase, scAccGrp, scNFTAddr, scNFTStartIDX.Uint64(), numNFTPerAccount)
