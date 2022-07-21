@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"runtime"
+	"sync"
 	"syscall"
 
 	"github.com/klaytn/klaytn-load-tester/klayslave/account"
@@ -718,15 +719,20 @@ func main() {
 	}
 	log.Printf("accgrp end")
 
-	chargeTestAccounts(mcNewCoinbase, mcAccGrp)
-	chargeTestAccounts(scNewCoinbase, scAccGrp)
-
-	chargeTokenTestAccounts(mcNewCoinbase, mcAccGrp, mcTokenAddr)
-	chargeTokenTestAccounts(scNewCoinbase, scAccGrp, scTokenAddr)
-
-	chargeNFTTestAccounts(mcNewCoinbase, mcAccGrp, mcNFTAddr, mcNFTStartIDX.Uint64(), numNFTPerAccount)
-	chargeNFTTestAccounts(scNewCoinbase, scAccGrp, scNFTAddr, scNFTStartIDX.Uint64(), numNFTPerAccount)
-
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		chargeTestAccounts(mcNewCoinbase, mcAccGrp)
+		chargeTokenTestAccounts(mcNewCoinbase, mcAccGrp, mcTokenAddr)
+		chargeNFTTestAccounts(mcNewCoinbase, mcAccGrp, mcNFTAddr, mcNFTStartIDX.Uint64(), numNFTPerAccount)
+	}()
+	go func() {
+		chargeTestAccounts(scNewCoinbase, scAccGrp)
+		chargeTokenTestAccounts(scNewCoinbase, scAccGrp, scTokenAddr)
+		chargeNFTTestAccounts(scNewCoinbase, scAccGrp, scNFTAddr, scNFTStartIDX.Uint64(), numNFTPerAccount)
+	}()
+	wg.Wait()
 	if len(filteredTask) == 0 {
 		log.Fatal("No Tc is set. Please set TcList. \nExample argument) -tc='" + tcNames + "'")
 	}
