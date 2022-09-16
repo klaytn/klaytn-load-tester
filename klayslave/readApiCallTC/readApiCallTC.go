@@ -13,6 +13,7 @@ import (
 
 	"github.com/klaytn/klaytn-load-tester/klayslave/account"
 	"github.com/klaytn/klaytn-load-tester/klayslave/clipool"
+	"github.com/klaytn/klaytn-load-tester/klayslave/task"
 	"github.com/klaytn/klaytn/client"
 	"github.com/klaytn/klaytn/networks/rpc"
 	"github.com/myzhan/boomer"
@@ -34,7 +35,7 @@ var (
 	count             uint64
 )
 
-func Init(accs []*account.Account, ep string, gp *big.Int) {
+func Init(params *task.Params) {
 	mutex.Lock()
 	defer mutex.Unlock()
 
@@ -45,8 +46,8 @@ func Init(accs []*account.Account, ep string, gp *big.Int) {
 
 	latestBlockNumber = big.NewInt(0)
 	count = 0
-	gasPrice = gp
-	endPoint = ep
+	gasPrice = params.GasPrice
+	endPoint = params.Endpoint
 
 	cliCreate := func() interface{} {
 		c, err := rpc.Dial(endPoint)
@@ -57,7 +58,7 @@ func Init(accs []*account.Account, ep string, gp *big.Int) {
 	}
 	cliPool.Init(20, 300, cliCreate)
 
-	for _, acc := range accs {
+	for _, acc := range params.AccGrp {
 		accGrp = append(accGrp, acc)
 	}
 	nAcc = len(accGrp)
