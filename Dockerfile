@@ -1,4 +1,4 @@
-ARG DOCKER_BASE_IMAGE=klaytn/build_base:1.1-go1.15.7-solc0.4.24
+ARG DOCKER_BASE_IMAGE=klaytn/build_base:1.2-go.1.18-solc0.8.13
 
 FROM ${DOCKER_BASE_IMAGE}
 
@@ -12,3 +12,4 @@ ADD . $SRC_DIR
 
 RUN cd $SRC_DIR/klayslave && go build -ldflags "-linkmode external -extldflags -static"
 RUN cp $SRC_DIR/klayslave/klayslave $PKG_DIR/bin
+RUN pip3 install locust==1.2.3
