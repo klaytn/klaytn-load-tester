@@ -8,8 +8,12 @@ ENV GOPATH /go
 
 RUN mkdir -p $PKG_DIR/bin
 
-ADD . $SRC_DIR
-
-RUN cd $SRC_DIR/klayslave && go build -ldflags "-linkmode external -extldflags -static"
-RUN cp $SRC_DIR/klayslave/klayslave $PKG_DIR/bin
 RUN pip3 install locust==1.2.3
+
+WORKDIR $SRC_DIR
+
+ADD . .
+
+RUN (cd klayslave && \
+        go build -ldflags "-linkmode external -extldflags -static" && \
+        cp klayslave $PKG_DIR/bin)
