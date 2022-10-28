@@ -1,14 +1,17 @@
-ARG DOCKER_BASE_IMAGE=klaytn/build_base:1.1-go1.15.7-solc0.4.24
+FROM golang:1.18-buster as builder
 
-FROM ${DOCKER_BASE_IMAGE}
+RUN apt update && apt install -y make
 
-ENV PKG_DIR /locust-docker-pkg
 ENV SRC_DIR /go/src/github.com/klaytn/klaytn-load-tester
 ENV GOPATH /go
 
-RUN mkdir -p $PKG_DIR/bin
+WORKDIR $SRC_DIR
+ADD . .
 
-ADD . $SRC_DIR
+RUN make && cp $SRC_DIR/build/bin/klayslave /bin/
 
-RUN cd $SRC_DIR/klayslave && go build -ldflags "-linkmode external -extldflags -static"
-RUN cp $SRC_DIR/klayslave/klayslave $PKG_DIR/bin
+FROM python:3.7-buster
+
+RUN pip3 install locust==1.2.3
+
+COPY --from=builder /bin/klayslave /bin/klayslave
