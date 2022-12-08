@@ -58,6 +58,7 @@ import (
 	"github.com/klaytn/klaytn-load-tester/klayslave/readApiCallTC"
 	receiptCheckTc "github.com/klaytn/klaytn-load-tester/klayslave/receiptCheckTC"
 	"github.com/klaytn/klaytn-load-tester/klayslave/storageTrieWriteTC"
+	"github.com/klaytn/klaytn-load-tester/klayslave/task"
 	"github.com/klaytn/klaytn-load-tester/klayslave/transferSignedTc"
 	"github.com/klaytn/klaytn-load-tester/klayslave/transferSignedWithCheckTc"
 	"github.com/klaytn/klaytn-load-tester/klayslave/transferUnsignedTc"
@@ -111,15 +112,6 @@ var (
 	gasPrice *big.Int
 	baseFee  *big.Int
 )
-
-type ExtendedTask struct {
-	Name    string
-	Weight  int
-	Fn      func()
-	Init    func(accs []*account.Account, endpoint string, gp *big.Int)
-	AccGrp  []*account.Account
-	EndPint string
-}
 
 func Create(endpoint string) *klay.Client {
 	c, err := klay.Dial(endpoint)
@@ -566,9 +558,9 @@ func setRLimit(resourceType int, val uint64) error {
 }
 
 // initTCList initializes TCs and returns a slice of TCs.
-func initTCList() (taskSet []*ExtendedTask) {
+func initTCList() (taskSet []*task.ExtendedTask) {
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "analyticTx",
 		Weight:  10,
 		Fn:      analyticTC.Run,
@@ -577,7 +569,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "analyticQueryLargestAccBalTx",
 		Weight:  10,
 		Fn:      analyticTC.QueryLargestAccBal,
@@ -586,7 +578,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "analyticQueryLargestTxValTx",
 		Weight:  10,
 		Fn:      analyticTC.QueryLargestTxVal,
@@ -595,7 +587,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "analyticQueryTotalTxValTx",
 		Weight:  10,
 		Fn:      analyticTC.QueryTotalTxVal,
@@ -604,7 +596,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "cpuHeavyTx",
 		Weight:  10,
 		Fn:      cpuHeavyTC.Run,
@@ -613,7 +605,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "doNothingTx",
 		Weight:  10,
 		Fn:      doNothingTC.Run,
@@ -622,7 +614,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    internalTxTC.Name,
 		Weight:  10,
 		Fn:      internalTxTC.Run,
@@ -631,7 +623,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    internalTxTC.NameMintNFT,
 		Weight:  10,
 		Fn:      internalTxTC.RunMintNFT,
@@ -640,7 +632,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "ioHeavyTx",
 		Weight:  10,
 		Fn:      ioHeavyTC.Run,
@@ -649,7 +641,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "ioHeavyScanTx",
 		Weight:  10,
 		Fn:      ioHeavyTC.Scan,
@@ -658,7 +650,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "ioHeavyWriteTx",
 		Weight:  10,
 		Fn:      ioHeavyTC.Write,
@@ -667,7 +659,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "largeMemoTC",
 		Weight:  10,
 		Fn:      largeMemoTC.Run,
@@ -676,7 +668,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    receiptCheckTc.Name,
 		Weight:  10,
 		Fn:      receiptCheckTc.Run,
@@ -685,7 +677,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "smallBankTx",
 		Weight:  10,
 		Fn:      smallBankTC.Run,
@@ -694,7 +686,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "smallBankAlmagateTx",
 		Weight:  10,
 		Fn:      smallBankTC.Almagate,
@@ -703,7 +695,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "smallBankGetBalanceTx",
 		Weight:  10,
 		Fn:      smallBankTC.GetBalance,
@@ -712,7 +704,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "smallBankSendPaymentTx",
 		Weight:  10,
 		Fn:      smallBankTC.SendPayment,
@@ -721,7 +713,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "smallBankUpdateBalanceTx",
 		Weight:  10,
 		Fn:      smallBankTC.UpdateBalance,
@@ -730,7 +722,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "smallBankUpdateSavingTx",
 		Weight:  10,
 		Fn:      smallBankTC.UpdateSaving,
@@ -739,7 +731,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "smallBankWriteCheckTx",
 		Weight:  10,
 		Fn:      smallBankTC.WriteCheck,
@@ -748,7 +740,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "transferSignedTx",
 		Weight:  10,
 		Fn:      transferSignedTc.Run,
@@ -757,7 +749,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "newValueTransferTC",
 		Weight:  10,
 		Fn:      newValueTransferTC.Run,
@@ -766,7 +758,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "newValueTransferWithCancelTC",
 		Weight:  10,
 		Fn:      newValueTransferWithCancelTC.Run,
@@ -775,7 +767,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "newFeeDelegatedValueTransferTC",
 		Weight:  10,
 		Fn:      newFeeDelegatedValueTransferTC.Run,
@@ -784,7 +776,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "newFeeDelegatedValueTransferWithRatioTC",
 		Weight:  10,
 		Fn:      newFeeDelegatedValueTransferWithRatioTC.Run,
@@ -793,7 +785,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "newValueTransferMemoTC",
 		Weight:  10,
 		Fn:      newValueTransferMemoTC.Run,
@@ -802,7 +794,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "newValueTransferLargeMemoTC",
 		Weight:  10,
 		Fn:      newValueTransferLargeMemoTC.Run,
@@ -811,7 +803,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "newValueTransferSmallMemoTC",
 		Weight:  10,
 		Fn:      newValueTransferSmallMemoTC.Run,
@@ -820,7 +812,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "newFeeDelegatedValueTransferMemoTC",
 		Weight:  10,
 		Fn:      newFeeDelegatedValueTransferMemoTC.Run,
@@ -829,7 +821,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "newFeeDelegatedValueTransferMemoWithRatioTC",
 		Weight:  10,
 		Fn:      newFeeDelegatedValueTransferMemoWithRatioTC.Run,
@@ -838,7 +830,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "newAccountCreationTC",
 		Weight:  10,
 		Fn:      newAccountCreationTC.Run,
@@ -847,7 +839,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "newAccountUpdateTC",
 		Weight:  10,
 		Fn:      newAccountUpdateTC.Run,
@@ -856,7 +848,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "newFeeDelegatedAccountUpdateTC",
 		Weight:  10,
 		Fn:      newFeeDelegatedAccountUpdateTC.Run,
@@ -865,7 +857,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "newFeeDelegatedAccountUpdateWithRatioTC",
 		Weight:  10,
 		Fn:      newFeeDelegatedAccountUpdateWithRatioTC.Run,
@@ -874,7 +866,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "newSmartContractDeployTC",
 		Weight:  10,
 		Fn:      newSmartContractDeployTC.Run,
@@ -883,7 +875,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "newFeeDelegatedSmartContractDeployTC",
 		Weight:  10,
 		Fn:      newFeeDelegatedSmartContractDeployTC.Run,
@@ -892,7 +884,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "newFeeDelegatedSmartContractDeployWithRatioTC",
 		Weight:  10,
 		Fn:      newFeeDelegatedSmartContractDeployWithRatioTC.Run,
@@ -901,7 +893,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "newSmartContractExecutionTC",
 		Weight:  10,
 		Fn:      newSmartContractExecutionTC.Run,
@@ -910,7 +902,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    storageTrieWriteTC.Name,
 		Weight:  10,
 		Fn:      storageTrieWriteTC.Run,
@@ -919,7 +911,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "newFeeDelegatedSmartContractExecutionTC",
 		Weight:  10,
 		Fn:      newFeeDelegatedSmartContractExecutionTC.Run,
@@ -928,7 +920,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "newFeeDelegatedSmartContractExecutionWithRatioTC",
 		Weight:  10,
 		Fn:      newFeeDelegatedSmartContractExecutionWithRatioTC.Run,
@@ -937,7 +929,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "newCancelTC",
 		Weight:  10,
 		Fn:      newCancelTC.Run,
@@ -946,7 +938,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "newFeeDelegatedCancelTC",
 		Weight:  10,
 		Fn:      newFeeDelegatedCancelTC.Run,
@@ -955,7 +947,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "newFeeDelegatedCancelWithRatioTC",
 		Weight:  10,
 		Fn:      newFeeDelegatedCancelWithRatioTC.Run,
@@ -964,7 +956,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "transferSignedWithCheckTx",
 		Weight:  10,
 		Fn:      transferSignedWithCheckTc.Run,
@@ -973,7 +965,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "transferUnsignedTx",
 		Weight:  10,
 		Fn:      transferUnsignedTc.Run,
@@ -982,7 +974,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "userStorageSetTx",
 		Weight:  10,
 		Fn:      userStorageTC.RunSet,
@@ -991,7 +983,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "userStorageSetGetTx",
 		Weight:  10,
 		Fn:      userStorageTC.RunSetGet,
@@ -1000,7 +992,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "ycsbTx",
 		Weight:  10,
 		Fn:      ycsbTC.Run,
@@ -1009,7 +1001,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "ycsbGetTx",
 		Weight:  10,
 		Fn:      ycsbTC.Get,
@@ -1018,7 +1010,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "ycsbSetTx",
 		Weight:  10,
 		Fn:      ycsbTC.Set,
@@ -1027,7 +1019,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    erc20TransferTC.Name,
 		Weight:  10,
 		Fn:      erc20TransferTC.Run,
@@ -1036,7 +1028,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    erc721TransferTC.Name,
 		Weight:  10,
 		Fn:      erc721TransferTC.Run,
@@ -1045,7 +1037,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "readGasPrice",
 		Weight:  10,
 		Fn:      readApiCallTC.GasPrice,
@@ -1054,7 +1046,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "readBlockNumber",
 		Weight:  10,
 		Fn:      readApiCallTC.BlockNumber,
@@ -1063,7 +1055,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "readGetBlockByNumber",
 		Weight:  10,
 		Fn:      readApiCallTC.GetBlockByNumber,
@@ -1072,7 +1064,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "readGetAccount",
 		Weight:  10,
 		Fn:      readApiCallTC.GetAccount,
@@ -1081,7 +1073,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "readGetBlockWithConsensusInfoByNumber",
 		Weight:  10,
 		Fn:      readApiCallTC.GetBlockWithConsensusInfoByNumber,
@@ -1090,7 +1082,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "readGetStorageAt",
 		Weight:  10,
 		Fn:      readApiCallContractTC.GetStorageAt,
@@ -1099,7 +1091,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "readCall",
 		Weight:  10,
 		Fn:      readApiCallContractTC.Call,
@@ -1108,7 +1100,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "readEstimateGas",
 		Weight:  10,
 		Fn:      readApiCallContractTC.EstimateGas,
@@ -1117,7 +1109,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "ethereumTxLegacyTC",
 		Weight:  10,
 		Fn:      ethereumTxLegacyTC.Run,
@@ -1126,7 +1118,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "ethereumTxAccessListTC",
 		Weight:  10,
 		Fn:      ethereumTxAccessListTC.Run,
@@ -1135,7 +1127,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "ethereumTxDynamicFeeTC",
 		Weight:  10,
 		Fn:      ethereumTxDynamicFeeTC.Run,
@@ -1144,7 +1136,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "newEthereumAccessListTC",
 		Weight:  10,
 		Fn:      newEthereumAccessListTC.Run,
@@ -1153,7 +1145,7 @@ func initTCList() (taskSet []*ExtendedTask) {
 		EndPint: gEndpoint,
 	})
 
-	taskSet = append(taskSet, &ExtendedTask{
+	taskSet = append(taskSet, &task.ExtendedTask{
 		Name:    "newEthereumDynamicFeeTC",
 		Weight:  10,
 		Fn:      newEthereumDynamicFeeTC.Run,
@@ -1215,7 +1207,7 @@ func main() {
 	// Call initTCList again to actually define all TCs
 	taskSet = initTCList()
 
-	var filteredTask []*ExtendedTask
+	var filteredTask []*task.ExtendedTask
 
 	println("Adding tasks")
 	for _, task := range taskSet {
@@ -1282,10 +1274,14 @@ func main() {
 
 	println("Initializing tasks")
 	var filteredBoomerTask []*boomer.Task
-	for _, task := range filteredTask {
-		task.Init(task.AccGrp, task.EndPint, gasPrice)
-		filteredBoomerTask = append(filteredBoomerTask, &boomer.Task{task.Weight, task.Fn, task.Name})
-		println("=> " + task.Name + " task is initialized.")
+	for _, t := range filteredTask {
+		t.Init(&task.Params{
+			AccGrp:   t.AccGrp,
+			Endpoint: t.EndPint,
+			GasPrice: gasPrice,
+		})
+		filteredBoomerTask = append(filteredBoomerTask, &boomer.Task{t.Weight, t.Fn, t.Name})
+		println("=> " + t.Name + " task is initialized.")
 	}
 
 	setRLimit(syscall.RLIMIT_NOFILE, 1024*400)

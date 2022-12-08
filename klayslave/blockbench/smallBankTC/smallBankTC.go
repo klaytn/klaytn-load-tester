@@ -17,6 +17,7 @@ import (
 
 	"github.com/klaytn/klaytn-load-tester/klayslave/account"
 	"github.com/klaytn/klaytn-load-tester/klayslave/clipool"
+	"github.com/klaytn/klaytn-load-tester/klayslave/task"
 	"github.com/klaytn/klaytn/accounts/abi/bind"
 	"github.com/klaytn/klaytn/blockchain/types"
 	"github.com/klaytn/klaytn/client"
@@ -56,15 +57,15 @@ const (
 )
 
 // Init initializes cliPool and accGrp; and also deploys the smart contract.
-func Init(accs []*account.Account, endpoint string, gp *big.Int) {
+func Init(params *task.Params) {
 	mutex.Lock()
 	defer mutex.Unlock()
 
 	if !initialized {
 		initialized = true
 
-		endPoint = endpoint
-		gasPrice = gp
+		endPoint = params.Endpoint
+		gasPrice = params.GasPrice
 
 		cliCreate := func() interface{} {
 			c, err := client.Dial(endPoint)
@@ -76,13 +77,13 @@ func Init(accs []*account.Account, endpoint string, gp *big.Int) {
 
 		cliPool.Init(20, 300, cliCreate)
 
-		for _, acc := range accs {
+		for _, acc := range params.AccGrp {
 			accGrp = append(accGrp, acc)
 		}
 
 		nAcc = len(accGrp)
 
-		deployContract(accs[0])
+		deployContract(params.AccGrp[0])
 
 		// Change the maximum number of users if the environment variable SMALLBANK_MAX_NUM_USERS has been set
 		if v := os.Getenv("SMALLBANK_MAX_NUM_USERS"); v != "" {
