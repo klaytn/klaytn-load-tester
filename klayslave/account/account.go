@@ -1,14 +1,18 @@
 package account
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"math/big"
 	"math/rand"
+	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
@@ -27,15 +31,24 @@ import (
 	"github.com/klaytn/klaytn/common/hexutil"
 	"github.com/klaytn/klaytn/crypto"
 	"github.com/klaytn/klaytn/params"
+	"github.com/klaytn/klaytn/rlp"
 )
 
 const Letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 var (
-	gasPrice *big.Int
-	chainID  *big.Int
-	baseFee  *big.Int
+	gasPrice       *big.Int
+	chainID        *big.Int
+	baseFee        *big.Int
+	HardhatPath    string
+	GlobalGovMutex sync.Mutex
+	MaxTxCount     uint
 )
+
+type Proof struct {
+	Proof [][]byte
+	Key   []byte
+}
 
 type Account struct {
 	id         int
@@ -1354,6 +1367,958 @@ func (self *Account) ExecuteStorageTrieStore(c *client.Client, to *Account, valu
 
 	self.nonce++
 
+	return hash, gasPrice, nil
+}
+
+func encodeHeader(block *types.Header) []byte {
+	encoded, _ := rlp.EncodeToBytes([]interface{}{
+		block.ParentHash,
+		block.Rewardbase,
+		block.Root,
+		block.TxHash,
+		block.ReceiptHash,
+		block.Bloom,
+		block.BlockScore,
+		block.Number,
+		block.GasUsed,
+		block.Time,
+		block.TimeFoS,
+		block.Extra,
+		block.Governance,
+		block.Vote,
+		block.BaseFee,
+	})
+	return encoded
+}
+
+func encodeReceipt(receipt *types.Receipt) ([]byte, error) {
+	var logs []interface{}
+	for j := 0; j < len(receipt.Logs); j++ {
+		logs = append(logs, []interface{}{receipt.Logs[j].Address, receipt.Logs[j].Topics, receipt.Logs[j].Data})
+	}
+	encReceipt, err := rlp.EncodeToBytes([]interface{}{receipt.Status, receipt.GasUsed, receipt.Bloom, logs})
+	return encReceipt, err
+}
+
+func (self *Account) TransferBridgeTx(c *client.Client, tokenContractAddr, verifierContractAddr common.Address, to *Account, value *big.Int, toChainId uint) (common.Hash, *big.Int, error) {
+	ctx := context.Background() //context.WithTimeout(context.Background(), 100*time.Second)
+
+	self.mutex.Lock()
+	defer self.mutex.Unlock()
+
+	nonce := self.GetNonce(c)
+	//gaslimit := uint64(10000000)
+	gaslimit := uint64(4100000000)
+
+	// 1. approve
+	var erc20PerformanceABI = `[{"constant":false,"inputs":[{"name":"spender","type":"address"},{"name":"value","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[],"name":"totalSupply","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"sender","type":"address"},{"name":"recipient","type":"address"},{"name":"amount","type":"uint256"}],"name":"transferFrom","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"spender","type":"address"},{"name":"addedValue","type":"uint256"}],"name":"increaseAllowance","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"account","type":"address"},{"name":"amount","type":"uint256"}],"name":"mint","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"account","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"account","type":"address"}],"name":"addMinter","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[],"name":"renounceMinter","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"spender","type":"address"},{"name":"subtractedValue","type":"uint256"}],"name":"decreaseAllowance","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"recipient","type":"address"},{"name":"amount","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"account","type":"address"}],"name":"isMinter","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[{"name":"owner","type":"address"},{"name":"spender","type":"address"}],"name":"allowance","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"inputs":[],"payable":false,"stateMutability":"nonpayable","type":"constructor"},{"anonymous":false,"inputs":[{"indexed":true,"name":"account","type":"address"}],"name":"MinterAdded","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"account","type":"address"}],"name":"MinterRemoved","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"from","type":"address"},{"indexed":true,"name":"to","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"name":"Transfer","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"owner","type":"address"},{"indexed":true,"name":"spender","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"name":"Approval","type":"event"}]`
+	contractABI := erc20PerformanceABI
+	parsed, err := abi.JSON(strings.NewReader(contractABI))
+
+	amount := &big.Int{}
+	amount.SetInt64(100)
+	data, err := parsed.Pack("approve", VerifierContractAddr, amount)
+	if err != nil {
+		log.Fatalf("failed to abi.Pack: %v", err)
+	}
+
+	signer := types.NewEIP155Signer(chainID)
+	tx, err := types.NewTransactionWithMap(types.TxTypeSmartContractExecution, map[types.TxValueKeyType]interface{}{
+		types.TxValueKeyNonce:    nonce,
+		types.TxValueKeyGasPrice: gasPrice,
+		//types.TxValueKeyGasLimit: uint64(5000000),
+		types.TxValueKeyGasLimit: gaslimit,
+		types.TxValueKeyFrom:     self.address,
+		types.TxValueKeyAmount:   value,
+		//types.TxValueKeyTo:       to.address,
+		types.TxValueKeyTo:   SmartContractAddr,
+		types.TxValueKeyData: data,
+	})
+	if err != nil {
+		log.Fatalf("Failed to encode tx: %v", err)
+	}
+
+	err = tx.SignWithKeys(signer, self.privateKey)
+	if err != nil {
+		log.Fatalf("Failed to sign tx: %v", err)
+	}
+
+	hash, err := c.SendRawTransaction(ctx, tx)
+	if err != nil {
+		if err.Error() == blockchain.ErrNonceTooLow.Error() || err.Error() == blockchain.ErrReplaceUnderpriced.Error() {
+			fmt.Printf("Bridge approve Account(%v) nonce(%v) : Failed to sendTransaction: %v\n", self.GetAddress().String(), nonce, err)
+			fmt.Printf("Bridge approve Account(%v) nonce is added to %v\n", self.GetAddress().String(), nonce+1)
+			self.nonce++
+		} else {
+			fmt.Printf("Bridge approve Account(%v) nonce(%v) : Failed to sendTransaction: %v\n", self.GetAddress().String(), nonce, err)
+		}
+		return common.Hash{0}, big.NewInt(0), err
+	}
+	fmt.Printf("Verifier approve hash: 0x%v\n", hex.EncodeToString(hash[:]))
+
+	self.nonce++
+	nonce++
+
+	// 2. erc20TransferRequest
+	// Get blocknumber before sending erc20TransferRequest
+	curBlockNum, err := c.BlockNumber(ctx)
+	if err != nil {
+		return common.Hash{0}, big.NewInt(0), err
+	}
+
+	// verifier
+	abiStr := `[{"inputs":[],"stateMutability":"nonpayable","type":"constructor"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"requestTokenAddr","type":"address"},{"indexed":false,"internalType":"address","name":"handleTokenAddr","type":"address"},{"indexed":false,"internalType":"address","name":"from","type":"address"},{"indexed":false,"internalType":"address","name":"to","type":"address"},{"indexed":false,"internalType":"uint256","name":"amount","type":"uint256"},{"indexed":false,"internalType":"bytes32","name":"reqHeaderHash","type":"bytes32"},{"indexed":false,"internalType":"bytes","name":"key","type":"bytes"}],"name":"BridgeERC20TransferHandle","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"from","type":"address"},{"indexed":true,"internalType":"address","name":"to","type":"address"},{"indexed":true,"internalType":"uint256","name":"amount","type":"uint256"},{"indexed":false,"internalType":"address","name":"burnedTokenAddr","type":"address"},{"indexed":false,"internalType":"address","name":"ctTokenAddr","type":"address"}],"name":"BridgeERC20TransferRequest","type":"event"},{"anonymous":false,"inputs":[{"components":[{"internalType":"uint256","name":"curBridgeFee","type":"uint256"},{"internalType":"uint256","name":"curHdContribFee","type":"uint256"},{"internalType":"uint256","name":"curGovContribFee","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"},{"internalType":"uint256","name":"enrolledAt","type":"uint256"},{"internalType":"uint256","name":"effectedAt","type":"uint256"}],"indexed":true,"internalType":"struct IManager.FeeSchedule","name":"feeSchedule","type":"tuple"}],"name":"CancelScheduledFee","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"feeReceiver","type":"address"}],"name":"ChangedFeeReceiver","type":"event"},{"anonymous":false,"inputs":[{"components":[{"internalType":"uint256","name":"curBridgeFee","type":"uint256"},{"internalType":"uint256","name":"curHdContribFee","type":"uint256"},{"internalType":"uint256","name":"curGovContribFee","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"},{"internalType":"uint256","name":"enrolledAt","type":"uint256"},{"internalType":"uint256","name":"effectedAt","type":"uint256"}],"indexed":true,"internalType":"struct IManager.FeeSchedule","name":"feeSchedule","type":"tuple"}],"name":"FeeScheduled","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"blockNumber","type":"uint256"}],"name":"Frozen","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"uint256","name":"headerNumber","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"requiredQuorum","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"committeeSize","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"validatorSize","type":"uint256"}],"name":"HeaderIntegrityPassed","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"uint8","name":"version","type":"uint8"}],"name":"Initialized","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"feeReceiver","type":"address"},{"indexed":false,"internalType":"uint256","name":"bridgeFee","type":"uint256"},{"indexed":false,"internalType":"address","name":"headerContributor","type":"address"},{"indexed":false,"internalType":"uint256","name":"govContributionFee","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"headerContributionFee","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"verifierBalance","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"userSent","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"change","type":"uint256"}],"name":"PayBridgeFee","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"onChainToken","type":"address"},{"indexed":true,"internalType":"address","name":"counterpartChainToken","type":"address"},{"indexed":true,"internalType":"bytes32","name":"transferEvent","type":"bytes32"}],"name":"TokenPairRegistered","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"governanceContributor","type":"address"},{"indexed":false,"internalType":"uint256","name":"governanceContributionFee","type":"uint256"}],"name":"TransferGovContrib","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"blockNumber","type":"uint256"}],"name":"Unfrozen","type":"event"},{"inputs":[],"name":"bridgeLibAddr","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"cancelFeeSchedule","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"address","name":"","type":"address"}],"name":"ctToken2TransferEvent","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"address","name":"","type":"address"}],"name":"ctToken2ocToken","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"},{"internalType":"address","name":"ocTokenAddr","type":"address"},{"internalType":"address","name":"ctTokenAddr","type":"address"}],"name":"erc20TransferRequest","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"feeReceiver","outputs":[{"internalType":"address payable","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"feeSchedule","outputs":[{"internalType":"uint256","name":"curBridgeFee","type":"uint256"},{"internalType":"uint256","name":"curHdContribFee","type":"uint256"},{"internalType":"uint256","name":"curGovContribFee","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"},{"internalType":"uint256","name":"enrolledAt","type":"uint256"},{"internalType":"uint256","name":"effectedAt","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"freeze","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"getFee","outputs":[{"internalType":"uint256","name":"","type":"uint256"},{"internalType":"uint256","name":"","type":"uint256"},{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getStampBlockNumbers","outputs":[{"internalType":"uint256[]","name":"","type":"uint256[]"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"sender","type":"address"}],"name":"getTransferReceipt","outputs":[{"components":[{"internalType":"uint256","name":"headerNumber","type":"uint256"},{"internalType":"address","name":"tokenAddr","type":"address"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"}],"internalType":"struct Typs.BridgeTransferStamp[]","name":"","type":"tuple[]"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getVersion","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"pure","type":"function"},{"inputs":[],"name":"govStateAddr","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"_bridgeLibAddr","type":"address"},{"internalType":"address","name":"_govStateAddr","type":"address"},{"internalType":"bool","name":"_mintable","type":"bool"}],"name":"initialize","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"name":"isVerifiedHeader","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"mintable","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"address","name":"","type":"address"}],"name":"ocToken2ctToken","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"owner","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"prevFeeSchdule","outputs":[{"internalType":"uint256","name":"curBridgeFee","type":"uint256"},{"internalType":"uint256","name":"curHdContribFee","type":"uint256"},{"internalType":"uint256","name":"curGovContribFee","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"},{"internalType":"uint256","name":"enrolledAt","type":"uint256"},{"internalType":"uint256","name":"effectedAt","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint256","name":"effectAt","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"}],"name":"registerFeeSchedule","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"onChainToken","type":"address"},{"internalType":"address","name":"counterpartChainToken","type":"address"},{"internalType":"bytes32","name":"transferEventSig","type":"bytes32"}],"name":"registerTokenPair","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"verifier","type":"address"}],"name":"registerVerifier","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address payable","name":"_feeReceiver","type":"address"}],"name":"setFeeReceiver","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"headerHash","type":"bytes32"},{"internalType":"bytes","name":"rlpEncodedReceipt","type":"bytes"},{"internalType":"bytes[]","name":"MPTProof","type":"bytes[]"},{"internalType":"bytes","name":"key","type":"bytes"}],"name":"submitGov","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes","name":"rlpEncodedHeader","type":"bytes"}],"name":"submitHeader","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"headerHash","type":"bytes32"},{"internalType":"bytes","name":"rlpEncodedReceipt","type":"bytes"},{"internalType":"bytes[]","name":"MPTProof","type":"bytes[]"},{"internalType":"bytes","name":"key","type":"bytes"}],"name":"submitReceipt","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[],"name":"temporalStop","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"uint256","name":"","type":"uint256"},{"internalType":"uint256","name":"","type":"uint256"}],"name":"transferStamps","outputs":[{"internalType":"uint256","name":"headerNumber","type":"uint256"},{"internalType":"address","name":"tokenAddr","type":"address"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"unfreeze","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"name":"verifiedHeaders","outputs":[{"internalType":"uint256","name":"headerNumber","type":"uint256"},{"internalType":"bytes32","name":"receiptHash","type":"bytes32"},{"internalType":"bytes","name":"vote","type":"bytes"},{"internalType":"bytes","name":"governance","type":"bytes"},{"internalType":"address","name":"contributor","type":"address"},{"internalType":"bool","name":"stored","type":"bool"}],"stateMutability":"view","type":"function"}]`
+
+	abii, err := abi.JSON(strings.NewReader(string(abiStr)))
+	if err != nil {
+		log.Fatalf("failed to abi.JSON: %v", err)
+	}
+	//log.Println("bridgeTx tokenContractAddr", tokenContractAddr.String(), "verifierContractAddr", verifierContractAddr.String(), "tokenRecipientAddr", to.address.String())
+
+	data, err = abii.Pack("erc20TransferRequest", to.address, value, tokenContractAddr, tokenContractAddr)
+	if err != nil {
+		log.Fatalf("failed to abi.Pack: %v", err)
+	}
+
+	signer = types.NewEIP155Signer(chainID)
+	tx, err = types.NewTransactionWithMap(types.TxTypeSmartContractExecution, map[types.TxValueKeyType]interface{}{
+		types.TxValueKeyNonce:    nonce,
+		types.TxValueKeyGasPrice: gasPrice,
+		types.TxValueKeyGasLimit: uint64(5000000),
+		types.TxValueKeyFrom:     self.address,
+		types.TxValueKeyAmount:   common.Big0,
+		types.TxValueKeyTo:       verifierContractAddr,
+		types.TxValueKeyData:     data,
+	})
+	if err != nil {
+		log.Fatalf("Failed to encode tx: %v", err)
+	}
+
+	err = tx.SignWithKeys(signer, self.privateKey)
+	if err != nil {
+		log.Fatalf("Failed to sign tx: %v", err)
+	}
+
+	hash, err = c.SendRawTransaction(ctx, tx)
+	if err != nil {
+		if err.Error() == blockchain.ErrNonceTooLow.Error() || err.Error() == blockchain.ErrReplaceUnderpriced.Error() {
+			fmt.Printf("erc20TransferRequest Account(%v) nonce(%v) : Failed to sendTransaction: %v\n", self.GetAddress().String(), nonce, err)
+			fmt.Printf("erc20TransferRequest Account(%v) nonce is added to %v\n", self.GetAddress().String(), nonce+1)
+			self.nonce++
+		} else {
+			fmt.Printf("erc20TransferRequest Account(%v) nonce(%v) : Failed to sendTransaction: %v\n", self.GetAddress().String(), nonce, err)
+		}
+		return common.Hash{0}, big.NewInt(0), err
+	}
+	fmt.Printf("erc20TransferRequest hash: 0x%v\n", hex.EncodeToString(hash[:]))
+
+	self.nonce++
+
+	// 3. Make proof
+	// - encoded header
+	// - encoded receipt
+	// - mpt proof and key
+
+	var resTx *types.Transaction
+	resTx, _, err = c.TransactionByHash(ctx, hash)
+	bind.WaitMined(ctx, c, resTx)
+
+	var blockHash common.Hash
+	for i := curBlockNum; i.Cmp(big.NewInt(0)) == 1; i = i.Add(i, big.NewInt(1)) {
+		time.Sleep(1 * time.Second)
+		fmt.Printf("Searching tx in blockNum: %d\n", i.Int64())
+		if i.Cmp(big.NewInt(0)) == 0 {
+			return hash, gasPrice, fmt.Errorf("Failed to find block with out tx")
+		}
+		block, err := c.BlockByNumber(ctx, i)
+		if err != nil {
+			return hash, gasPrice, err
+		}
+		count, err := c.TransactionCount(ctx, block.Hash())
+		if err != nil {
+			return hash, gasPrice, err
+		}
+		found := false
+		for j := 0; j < int(count); j++ {
+			fmt.Printf("Comparing %dth tx in blockNum: %d\n", j, i.Int64())
+			tmpTx, err := c.TransactionInBlock(ctx, block.Hash(), uint(j))
+			if err != nil {
+				return hash, gasPrice, err
+			}
+			if resTx.Hash() == tmpTx.Hash() {
+				blockHash = block.Hash()
+				found = true
+				break
+			}
+		}
+		if found {
+			fmt.Println("Found")
+			break
+		}
+	}
+
+	header, err := c.HeaderByHash(ctx, blockHash)
+	if err != nil {
+		log.Fatalf("Failed to find header with hash: %v", err)
+		return hash, gasPrice, err
+	}
+	encodedHeader := encodeHeader(header)
+
+	count, err := c.TransactionCount(ctx, blockHash)
+	if err != nil {
+		log.Fatalf("Failed to get tx count: %v", err)
+		return hash, gasPrice, err
+	}
+
+	var receipt *types.Receipt
+	var encodedReceipt []byte
+	var encReceipt []byte
+
+	for i := 0; i < int(count); i++ {
+		tx, err := c.TransactionInBlock(ctx, blockHash, uint(i))
+		if err != nil {
+			log.Fatalf("Failed to get tx in block: %v", err)
+			return hash, gasPrice, err
+		}
+		receipt, err = c.TransactionReceipt(ctx, tx.Hash())
+		if err != nil {
+			log.Fatalf("Failed to get receipt: %v", err)
+			return hash, gasPrice, err
+		}
+		encodedReceipt, err = encodeReceipt(receipt)
+		if err != nil {
+			log.Fatalf("Failed to encode receipt: %v", err)
+			return hash, gasPrice, err
+		}
+		if tx.Hash() == resTx.Hash() {
+			encReceipt = encodedReceipt
+		}
+	}
+
+	// Get proof using hardhat
+	cmd := exec.Command("npx", "hardhat", "getProof", "--tx", hash.Hex())
+	cmd.Dir = HardhatPath
+	stdout, err := cmd.Output()
+
+	if err != nil {
+		log.Fatalf("Failed to run npx: %v", err)
+	}
+	outputStr := string(stdout)
+	outputStr = strings.ReplaceAll(outputStr, "'", "\"")
+	var proofStr []string
+	//fmt.Printf("output: %v\n", string(stdout))
+	err = json.Unmarshal([]byte(outputStr), &proofStr)
+	if err != nil {
+		log.Fatalf("Failed to parse proof from npx output: %v", err)
+	}
+	var proof [][]byte
+	for i := 0; i < len(proofStr); i++ {
+		decoded, err := hex.DecodeString(proofStr[i][2:])
+		if err != nil {
+			log.Fatalf("Failed to decode proof[%d] into []byte: %v", i, err)
+		}
+		proof = append(proof, decoded)
+	}
+
+	// Get key from hardhat
+	cmd = exec.Command("npx", "hardhat", "getIndexKey", "--tx", hash.Hex())
+	cmd.Dir = HardhatPath
+	stdout, err = cmd.Output()
+
+	if err != nil {
+		log.Fatalf("Failed to run npx: %v", err)
+	}
+	key := strings.TrimSpace(string(stdout))
+	//fmt.Printf("key: %v\n", key)
+	//fmt.Println("proof: %v\n", proof)
+
+	// 4. Submit header
+	nonce = self.GetNonce(c)
+
+	data, err = abii.Pack("submitHeader", encodedHeader)
+	if err != nil {
+		log.Fatalf("failed to abi.Pack: %v", err)
+	}
+
+	signer = types.NewEIP155Signer(chainID)
+	tx, err = types.NewTransactionWithMap(types.TxTypeSmartContractExecution, map[types.TxValueKeyType]interface{}{
+		types.TxValueKeyNonce:    nonce,
+		types.TxValueKeyGasPrice: gasPrice,
+		types.TxValueKeyGasLimit: uint64(5000000000000),
+		types.TxValueKeyFrom:     self.address,
+		types.TxValueKeyAmount:   common.Big0,
+		types.TxValueKeyTo:       verifierContractAddr,
+		types.TxValueKeyData:     data,
+	})
+	if err != nil {
+		log.Fatalf("Failed to encode tx: %v", err)
+	}
+
+	err = tx.SignWithKeys(signer, self.privateKey)
+	if err != nil {
+		log.Fatalf("Failed to sign tx: %v", err)
+	}
+
+	hash, err = c.SendRawTransaction(ctx, tx)
+	if err != nil {
+		if err.Error() == blockchain.ErrNonceTooLow.Error() || err.Error() == blockchain.ErrReplaceUnderpriced.Error() {
+			fmt.Printf("SubmitHeader Account(%v) nonce(%v) : Failed to sendTransaction: %v\n", self.GetAddress().String(), nonce, err)
+			fmt.Printf("SubmitHeader Account(%v) nonce is added to %v\n", self.GetAddress().String(), nonce+1)
+			self.nonce++
+		} else {
+			fmt.Printf("SubmitHeader Account(%v) nonce(%v) : Failed to sendTransaction: %v\n", self.GetAddress().String(), nonce, err)
+		}
+		return hash, gasPrice, err
+	}
+
+	self.nonce++
+
+	bind.WaitMined(ctx, c, tx)
+
+	// print result with related info
+	receipt, err = c.TransactionReceipt(ctx, tx.Hash())
+	if err != nil {
+		log.Fatalf("Failed to get receipt for erc20TransferVerify: %v", err)
+	}
+	blockNum, err := c.BlockNumber(ctx)
+	if err != nil {
+		log.Fatalf("failed to get blocknum: %v\n", err)
+	}
+	header, err = c.HeaderByNumber(ctx, blockNum)
+	if err != nil {
+		log.Fatalf("failed to get header: %v\n", err)
+	}
+	istanbulExtra, err := types.ExtractIstanbulExtra(header)
+	if err != nil {
+		log.Fatalf("failed to get istanbulextra: %v\n", err)
+	}
+	gasUsed := new(big.Int).SetUint64(receipt.GasUsed)
+	fmt.Printf("submitHeader hash: 0x%v, status: %d, gasUsed: %v, validator len: %d\n", hex.EncodeToString(hash[:]), receipt.Status, gasUsed.String(), len(istanbulExtra.Validators))
+
+	// 5. submitReceipt
+
+	nonce = self.GetNonce(c)
+	// 1 KLAY
+	//fee := big.NewInt(uint64(1000000000000000000))
+	fee := &big.Int{}
+	// 9 klay
+	fee.SetUint64(uint64(9000000000000000000))
+	keyByte, err := hex.DecodeString(key[2:])
+	if err != nil {
+		log.Fatalf("Failed to decode key into []byte: %v", err)
+	}
+	data, err = abii.Pack("submitReceipt", blockHash, encReceipt, proof, keyByte)
+	if err != nil {
+		log.Fatalf("failed to abi.Pack: %v", err)
+	}
+
+	signer = types.NewEIP155Signer(chainID)
+	tx, err = types.NewTransactionWithMap(types.TxTypeSmartContractExecution, map[types.TxValueKeyType]interface{}{
+		types.TxValueKeyNonce:    nonce,
+		types.TxValueKeyGasPrice: gasPrice,
+		types.TxValueKeyGasLimit: uint64(5000000000000),
+		types.TxValueKeyFrom:     self.address,
+		types.TxValueKeyAmount:   fee,
+		types.TxValueKeyTo:       verifierContractAddr,
+		types.TxValueKeyData:     data,
+	})
+	if err != nil {
+		log.Fatalf("Failed to encode tx: %v", err)
+	}
+
+	err = tx.SignWithKeys(signer, self.privateKey)
+	if err != nil {
+		log.Fatalf("Failed to sign tx: %v", err)
+	}
+
+	hash, err = c.SendRawTransaction(ctx, tx)
+	if err != nil {
+		if err.Error() == blockchain.ErrNonceTooLow.Error() || err.Error() == blockchain.ErrReplaceUnderpriced.Error() {
+			fmt.Printf("SubmitReceipt Account(%v) nonce(%v) : Failed to sendTransaction: %v\n", self.GetAddress().String(), nonce, err)
+			fmt.Printf("SubmitReceipt Account(%v) nonce is added to %v\n", self.GetAddress().String(), nonce+1)
+			self.nonce++
+		} else {
+			fmt.Printf("SubmitReceipt Account(%v) nonce(%v) : Failed to sendTransaction: %v\n", self.GetAddress().String(), nonce, err)
+		}
+		return hash, gasPrice, err
+	}
+
+	self.nonce++
+
+	// Wait and log gasUsed
+	bind.WaitMined(ctx, c, tx)
+	receipt, err = c.TransactionReceipt(ctx, tx.Hash())
+	if err != nil {
+		log.Fatalf("Failed to get receipt for erc20TransferVerify: %v", err)
+	}
+	gasUsed = new(big.Int).SetUint64(receipt.GasUsed)
+	fmt.Printf("submitReceipt hash: 0x%v, status: %d, gasUsed: %v, validator len: %d, tx count: %d\n", hex.EncodeToString(hash[:]), receipt.Status, gasUsed.String(), len(istanbulExtra.Validators), count)
+	return hash, gasPrice, nil
+}
+
+func (self *Account) Approve(c *client.Client, tokenContractAddr, verifierContractAddr common.Address, to *Account, value *big.Int, toChainId uint) (common.Hash, *big.Int, error) {
+	ctx := context.Background() //context.WithTimeout(context.Background(), 100*time.Second)
+
+	self.mutex.Lock()
+	defer self.mutex.Unlock()
+
+	nonce := self.GetNonce(c)
+	gaslimit := uint64(4100000000)
+
+	// approve
+	var erc20PerformanceABI = `[{"constant":false,"inputs":[{"name":"spender","type":"address"},{"name":"value","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[],"name":"totalSupply","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"sender","type":"address"},{"name":"recipient","type":"address"},{"name":"amount","type":"uint256"}],"name":"transferFrom","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"spender","type":"address"},{"name":"addedValue","type":"uint256"}],"name":"increaseAllowance","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"account","type":"address"},{"name":"amount","type":"uint256"}],"name":"mint","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"account","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"account","type":"address"}],"name":"addMinter","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[],"name":"renounceMinter","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"spender","type":"address"},{"name":"subtractedValue","type":"uint256"}],"name":"decreaseAllowance","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"recipient","type":"address"},{"name":"amount","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"account","type":"address"}],"name":"isMinter","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[{"name":"owner","type":"address"},{"name":"spender","type":"address"}],"name":"allowance","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"inputs":[],"payable":false,"stateMutability":"nonpayable","type":"constructor"},{"anonymous":false,"inputs":[{"indexed":true,"name":"account","type":"address"}],"name":"MinterAdded","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"account","type":"address"}],"name":"MinterRemoved","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"from","type":"address"},{"indexed":true,"name":"to","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"name":"Transfer","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"owner","type":"address"},{"indexed":true,"name":"spender","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"name":"Approval","type":"event"}]`
+	contractABI := erc20PerformanceABI
+	parsed, err := abi.JSON(strings.NewReader(contractABI))
+
+	amount := &big.Int{}
+	amount.SetInt64(1e10)
+	data, err := parsed.Pack("approve", VerifierContractAddr, amount)
+	if err != nil {
+		log.Fatalf("failed to abi.Pack: %v", err)
+	}
+
+	signer := types.NewEIP155Signer(chainID)
+	tx, err := types.NewTransactionWithMap(types.TxTypeSmartContractExecution, map[types.TxValueKeyType]interface{}{
+		types.TxValueKeyNonce:    nonce,
+		types.TxValueKeyGasPrice: gasPrice,
+		types.TxValueKeyGasLimit: gaslimit,
+		types.TxValueKeyFrom:     self.address,
+		types.TxValueKeyAmount:   common.Big0,
+		types.TxValueKeyTo:       tokenContractAddr,
+		types.TxValueKeyData:     data,
+	})
+	if err != nil {
+		log.Fatalf("Failed to encode tx: %v", err)
+	}
+
+	err = tx.SignWithKeys(signer, self.privateKey)
+	if err != nil {
+		log.Fatalf("Failed to sign tx: %v", err)
+	}
+
+	hash, err := c.SendRawTransaction(ctx, tx)
+	if err != nil {
+		if err.Error() == blockchain.ErrNonceTooLow.Error() || err.Error() == blockchain.ErrReplaceUnderpriced.Error() {
+			fmt.Printf("approve Account(%v) nonce(%v) : Failed to sendTransaction: %v\n", self.GetAddress().String(), nonce, err)
+			fmt.Printf("approve Account(%v) nonce is added to %v\n", self.GetAddress().String(), nonce+1)
+			self.nonce++
+		} else {
+			fmt.Printf("approve Account(%v) nonce(%v) : Failed to sendTransaction: %v\n", self.GetAddress().String(), nonce, err)
+		}
+		return common.Hash{0}, big.NewInt(0), err
+	}
+	fmt.Printf("approve hash: 0x%v\n", hex.EncodeToString(hash[:]))
+	bind.WaitMined(ctx, c, tx)
+
+	self.nonce++
+	nonce++
+	return hash, gasPrice, nil
+}
+
+func (self *Account) TransferBridgeErc20Request(c *client.Client, tokenContractAddr, verifierContractAddr common.Address, to *Account, value *big.Int, toChainId uint) (common.Hash, *big.Int, error) {
+	ctx := context.Background() //context.WithTimeout(context.Background(), 100*time.Second)
+
+	self.mutex.Lock()
+	defer self.mutex.Unlock()
+
+	nonce := self.GetNonce(c)
+
+	// verifier
+	abiStr := `[{"inputs":[],"stateMutability":"nonpayable","type":"constructor"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"requestTokenAddr","type":"address"},{"indexed":false,"internalType":"address","name":"handleTokenAddr","type":"address"},{"indexed":false,"internalType":"address","name":"from","type":"address"},{"indexed":false,"internalType":"address","name":"to","type":"address"},{"indexed":false,"internalType":"uint256","name":"amount","type":"uint256"},{"indexed":false,"internalType":"bytes32","name":"reqHeaderHash","type":"bytes32"},{"indexed":false,"internalType":"bytes","name":"key","type":"bytes"}],"name":"BridgeERC20TransferHandle","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"from","type":"address"},{"indexed":true,"internalType":"address","name":"to","type":"address"},{"indexed":true,"internalType":"uint256","name":"amount","type":"uint256"},{"indexed":false,"internalType":"address","name":"burnedTokenAddr","type":"address"},{"indexed":false,"internalType":"address","name":"ctTokenAddr","type":"address"}],"name":"BridgeERC20TransferRequest","type":"event"},{"anonymous":false,"inputs":[{"components":[{"internalType":"uint256","name":"curBridgeFee","type":"uint256"},{"internalType":"uint256","name":"curHdContribFee","type":"uint256"},{"internalType":"uint256","name":"curGovContribFee","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"},{"internalType":"uint256","name":"enrolledAt","type":"uint256"},{"internalType":"uint256","name":"effectedAt","type":"uint256"}],"indexed":true,"internalType":"struct IManager.FeeSchedule","name":"feeSchedule","type":"tuple"}],"name":"CancelScheduledFee","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"feeReceiver","type":"address"}],"name":"ChangedFeeReceiver","type":"event"},{"anonymous":false,"inputs":[{"components":[{"internalType":"uint256","name":"curBridgeFee","type":"uint256"},{"internalType":"uint256","name":"curHdContribFee","type":"uint256"},{"internalType":"uint256","name":"curGovContribFee","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"},{"internalType":"uint256","name":"enrolledAt","type":"uint256"},{"internalType":"uint256","name":"effectedAt","type":"uint256"}],"indexed":true,"internalType":"struct IManager.FeeSchedule","name":"feeSchedule","type":"tuple"}],"name":"FeeScheduled","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"blockNumber","type":"uint256"}],"name":"Frozen","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"uint256","name":"headerNumber","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"requiredQuorum","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"committeeSize","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"validatorSize","type":"uint256"}],"name":"HeaderIntegrityPassed","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"uint8","name":"version","type":"uint8"}],"name":"Initialized","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"feeReceiver","type":"address"},{"indexed":false,"internalType":"uint256","name":"bridgeFee","type":"uint256"},{"indexed":false,"internalType":"address","name":"headerContributor","type":"address"},{"indexed":false,"internalType":"uint256","name":"govContributionFee","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"headerContributionFee","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"verifierBalance","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"userSent","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"change","type":"uint256"}],"name":"PayBridgeFee","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"onChainToken","type":"address"},{"indexed":true,"internalType":"address","name":"counterpartChainToken","type":"address"},{"indexed":true,"internalType":"bytes32","name":"transferEvent","type":"bytes32"}],"name":"TokenPairRegistered","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"governanceContributor","type":"address"},{"indexed":false,"internalType":"uint256","name":"governanceContributionFee","type":"uint256"}],"name":"TransferGovContrib","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"blockNumber","type":"uint256"}],"name":"Unfrozen","type":"event"},{"inputs":[],"name":"bridgeLibAddr","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"cancelFeeSchedule","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"address","name":"","type":"address"}],"name":"ctToken2TransferEvent","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"address","name":"","type":"address"}],"name":"ctToken2ocToken","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"},{"internalType":"address","name":"ocTokenAddr","type":"address"},{"internalType":"address","name":"ctTokenAddr","type":"address"}],"name":"erc20TransferRequest","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"feeReceiver","outputs":[{"internalType":"address payable","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"feeSchedule","outputs":[{"internalType":"uint256","name":"curBridgeFee","type":"uint256"},{"internalType":"uint256","name":"curHdContribFee","type":"uint256"},{"internalType":"uint256","name":"curGovContribFee","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"},{"internalType":"uint256","name":"enrolledAt","type":"uint256"},{"internalType":"uint256","name":"effectedAt","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"freeze","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"getFee","outputs":[{"internalType":"uint256","name":"","type":"uint256"},{"internalType":"uint256","name":"","type":"uint256"},{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getStampBlockNumbers","outputs":[{"internalType":"uint256[]","name":"","type":"uint256[]"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"sender","type":"address"}],"name":"getTransferReceipt","outputs":[{"components":[{"internalType":"uint256","name":"headerNumber","type":"uint256"},{"internalType":"address","name":"tokenAddr","type":"address"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"}],"internalType":"struct Typs.BridgeTransferStamp[]","name":"","type":"tuple[]"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getVersion","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"pure","type":"function"},{"inputs":[],"name":"govStateAddr","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"_bridgeLibAddr","type":"address"},{"internalType":"address","name":"_govStateAddr","type":"address"},{"internalType":"bool","name":"_mintable","type":"bool"}],"name":"initialize","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"name":"isVerifiedHeader","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"mintable","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"address","name":"","type":"address"}],"name":"ocToken2ctToken","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"owner","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"prevFeeSchdule","outputs":[{"internalType":"uint256","name":"curBridgeFee","type":"uint256"},{"internalType":"uint256","name":"curHdContribFee","type":"uint256"},{"internalType":"uint256","name":"curGovContribFee","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"},{"internalType":"uint256","name":"enrolledAt","type":"uint256"},{"internalType":"uint256","name":"effectedAt","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint256","name":"effectAt","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"}],"name":"registerFeeSchedule","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"onChainToken","type":"address"},{"internalType":"address","name":"counterpartChainToken","type":"address"},{"internalType":"bytes32","name":"transferEventSig","type":"bytes32"}],"name":"registerTokenPair","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"verifier","type":"address"}],"name":"registerVerifier","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address payable","name":"_feeReceiver","type":"address"}],"name":"setFeeReceiver","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"headerHash","type":"bytes32"},{"internalType":"bytes","name":"rlpEncodedReceipt","type":"bytes"},{"internalType":"bytes[]","name":"MPTProof","type":"bytes[]"},{"internalType":"bytes","name":"key","type":"bytes"}],"name":"submitGov","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes","name":"rlpEncodedHeader","type":"bytes"}],"name":"submitHeader","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"headerHash","type":"bytes32"},{"internalType":"bytes","name":"rlpEncodedReceipt","type":"bytes"},{"internalType":"bytes[]","name":"MPTProof","type":"bytes[]"},{"internalType":"bytes","name":"key","type":"bytes"}],"name":"submitReceipt","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[],"name":"temporalStop","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"uint256","name":"","type":"uint256"},{"internalType":"uint256","name":"","type":"uint256"}],"name":"transferStamps","outputs":[{"internalType":"uint256","name":"headerNumber","type":"uint256"},{"internalType":"address","name":"tokenAddr","type":"address"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"unfreeze","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"name":"verifiedHeaders","outputs":[{"internalType":"uint256","name":"headerNumber","type":"uint256"},{"internalType":"bytes32","name":"receiptHash","type":"bytes32"},{"internalType":"bytes","name":"vote","type":"bytes"},{"internalType":"bytes","name":"governance","type":"bytes"},{"internalType":"address","name":"contributor","type":"address"},{"internalType":"bool","name":"stored","type":"bool"}],"stateMutability":"view","type":"function"}]`
+
+	abii, err := abi.JSON(strings.NewReader(string(abiStr)))
+	if err != nil {
+		log.Fatalf("failed to abi.JSON: %v", err)
+	}
+
+	data, err := abii.Pack("erc20TransferRequest", to.address, value, tokenContractAddr, tokenContractAddr)
+	if err != nil {
+		log.Fatalf("failed to abi.Pack: %v", err)
+	}
+
+	signer := types.NewEIP155Signer(chainID)
+	tx, err := types.NewTransactionWithMap(types.TxTypeSmartContractExecution, map[types.TxValueKeyType]interface{}{
+		types.TxValueKeyNonce:    nonce,
+		types.TxValueKeyGasPrice: gasPrice,
+		types.TxValueKeyGasLimit: uint64(5000000),
+		types.TxValueKeyFrom:     self.address,
+		types.TxValueKeyAmount:   common.Big0,
+		types.TxValueKeyTo:       verifierContractAddr,
+		types.TxValueKeyData:     data,
+	})
+	if err != nil {
+		log.Fatalf("Failed to encode tx: %v", err)
+	}
+
+	err = tx.SignWithKeys(signer, self.privateKey)
+	if err != nil {
+		log.Fatalf("Failed to sign tx: %v", err)
+	}
+
+	hash, err := c.SendRawTransaction(ctx, tx)
+	if err != nil {
+		if err.Error() == blockchain.ErrNonceTooLow.Error() || err.Error() == blockchain.ErrReplaceUnderpriced.Error() {
+			fmt.Printf("erc20TransferRequest Account(%v) nonce(%v) : Failed to sendTransaction: %v\n", self.GetAddress().String(), nonce, err)
+			fmt.Printf("erc20TransferReqeust Account(%v) nonce is added to %v\n", self.GetAddress().String(), nonce+1)
+			self.nonce++
+		} else {
+			fmt.Printf("erc20TransferRequest Account(%v) nonce(%v) : Failed to sendTransaction: %v\n", self.GetAddress().String(), nonce, err)
+		}
+		return hash, gasPrice, err
+	}
+
+	self.nonce++
+
+	return hash, gasPrice, nil
+}
+
+func (self *Account) TransferSubmitHeader(c *client.Client, verifierContractAddr common.Address, blockNum int64) (common.Hash, common.Hash, error) {
+	ctx := context.Background() //context.WithTimeout(context.Background(), 100*time.Second)
+
+	header, err := c.HeaderByNumber(ctx, big.NewInt(blockNum))
+	if err != nil {
+		log.Fatalf("failed to get header: %v\n", err)
+	}
+	encodedHeader := encodeHeader(header)
+
+	self.mutex.Lock()
+	defer self.mutex.Unlock()
+
+	nonce := self.GetNonce(c)
+
+	abiStr := `[{"inputs":[],"stateMutability":"nonpayable","type":"constructor"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"requestTokenAddr","type":"address"},{"indexed":false,"internalType":"address","name":"handleTokenAddr","type":"address"},{"indexed":false,"internalType":"address","name":"from","type":"address"},{"indexed":false,"internalType":"address","name":"to","type":"address"},{"indexed":false,"internalType":"uint256","name":"amount","type":"uint256"},{"indexed":false,"internalType":"bytes32","name":"reqHeaderHash","type":"bytes32"},{"indexed":false,"internalType":"bytes","name":"key","type":"bytes"}],"name":"BridgeERC20TransferHandle","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"from","type":"address"},{"indexed":true,"internalType":"address","name":"to","type":"address"},{"indexed":true,"internalType":"uint256","name":"amount","type":"uint256"},{"indexed":false,"internalType":"address","name":"burnedTokenAddr","type":"address"},{"indexed":false,"internalType":"address","name":"ctTokenAddr","type":"address"}],"name":"BridgeERC20TransferRequest","type":"event"},{"anonymous":false,"inputs":[{"components":[{"internalType":"uint256","name":"curBridgeFee","type":"uint256"},{"internalType":"uint256","name":"curHdContribFee","type":"uint256"},{"internalType":"uint256","name":"curGovContribFee","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"},{"internalType":"uint256","name":"enrolledAt","type":"uint256"},{"internalType":"uint256","name":"effectedAt","type":"uint256"}],"indexed":true,"internalType":"struct IManager.FeeSchedule","name":"feeSchedule","type":"tuple"}],"name":"CancelScheduledFee","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"feeReceiver","type":"address"}],"name":"ChangedFeeReceiver","type":"event"},{"anonymous":false,"inputs":[{"components":[{"internalType":"uint256","name":"curBridgeFee","type":"uint256"},{"internalType":"uint256","name":"curHdContribFee","type":"uint256"},{"internalType":"uint256","name":"curGovContribFee","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"},{"internalType":"uint256","name":"enrolledAt","type":"uint256"},{"internalType":"uint256","name":"effectedAt","type":"uint256"}],"indexed":true,"internalType":"struct IManager.FeeSchedule","name":"feeSchedule","type":"tuple"}],"name":"FeeScheduled","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"blockNumber","type":"uint256"}],"name":"Frozen","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"uint256","name":"headerNumber","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"requiredQuorum","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"committeeSize","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"validatorSize","type":"uint256"}],"name":"HeaderIntegrityPassed","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"uint8","name":"version","type":"uint8"}],"name":"Initialized","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"feeReceiver","type":"address"},{"indexed":false,"internalType":"uint256","name":"bridgeFee","type":"uint256"},{"indexed":false,"internalType":"address","name":"headerContributor","type":"address"},{"indexed":false,"internalType":"uint256","name":"govContributionFee","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"headerContributionFee","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"verifierBalance","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"userSent","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"change","type":"uint256"}],"name":"PayBridgeFee","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"onChainToken","type":"address"},{"indexed":true,"internalType":"address","name":"counterpartChainToken","type":"address"},{"indexed":true,"internalType":"bytes32","name":"transferEvent","type":"bytes32"}],"name":"TokenPairRegistered","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"governanceContributor","type":"address"},{"indexed":false,"internalType":"uint256","name":"governanceContributionFee","type":"uint256"}],"name":"TransferGovContrib","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"blockNumber","type":"uint256"}],"name":"Unfrozen","type":"event"},{"inputs":[],"name":"bridgeLibAddr","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"cancelFeeSchedule","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"address","name":"","type":"address"}],"name":"ctToken2TransferEvent","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"address","name":"","type":"address"}],"name":"ctToken2ocToken","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"},{"internalType":"address","name":"ocTokenAddr","type":"address"},{"internalType":"address","name":"ctTokenAddr","type":"address"}],"name":"erc20TransferRequest","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"feeReceiver","outputs":[{"internalType":"address payable","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"feeSchedule","outputs":[{"internalType":"uint256","name":"curBridgeFee","type":"uint256"},{"internalType":"uint256","name":"curHdContribFee","type":"uint256"},{"internalType":"uint256","name":"curGovContribFee","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"},{"internalType":"uint256","name":"enrolledAt","type":"uint256"},{"internalType":"uint256","name":"effectedAt","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"freeze","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"getFee","outputs":[{"internalType":"uint256","name":"","type":"uint256"},{"internalType":"uint256","name":"","type":"uint256"},{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getStampBlockNumbers","outputs":[{"internalType":"uint256[]","name":"","type":"uint256[]"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"sender","type":"address"}],"name":"getTransferReceipt","outputs":[{"components":[{"internalType":"uint256","name":"headerNumber","type":"uint256"},{"internalType":"address","name":"tokenAddr","type":"address"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"}],"internalType":"struct Typs.BridgeTransferStamp[]","name":"","type":"tuple[]"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getVersion","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"pure","type":"function"},{"inputs":[],"name":"govStateAddr","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"_bridgeLibAddr","type":"address"},{"internalType":"address","name":"_govStateAddr","type":"address"},{"internalType":"bool","name":"_mintable","type":"bool"}],"name":"initialize","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"name":"isVerifiedHeader","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"mintable","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"address","name":"","type":"address"}],"name":"ocToken2ctToken","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"owner","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"prevFeeSchdule","outputs":[{"internalType":"uint256","name":"curBridgeFee","type":"uint256"},{"internalType":"uint256","name":"curHdContribFee","type":"uint256"},{"internalType":"uint256","name":"curGovContribFee","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"},{"internalType":"uint256","name":"enrolledAt","type":"uint256"},{"internalType":"uint256","name":"effectedAt","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint256","name":"effectAt","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"}],"name":"registerFeeSchedule","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"onChainToken","type":"address"},{"internalType":"address","name":"counterpartChainToken","type":"address"},{"internalType":"bytes32","name":"transferEventSig","type":"bytes32"}],"name":"registerTokenPair","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"verifier","type":"address"}],"name":"registerVerifier","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address payable","name":"_feeReceiver","type":"address"}],"name":"setFeeReceiver","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"headerHash","type":"bytes32"},{"internalType":"bytes","name":"rlpEncodedReceipt","type":"bytes"},{"internalType":"bytes[]","name":"MPTProof","type":"bytes[]"},{"internalType":"bytes","name":"key","type":"bytes"}],"name":"submitGov","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes","name":"rlpEncodedHeader","type":"bytes"}],"name":"submitHeader","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"headerHash","type":"bytes32"},{"internalType":"bytes","name":"rlpEncodedReceipt","type":"bytes"},{"internalType":"bytes[]","name":"MPTProof","type":"bytes[]"},{"internalType":"bytes","name":"key","type":"bytes"}],"name":"submitReceipt","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[],"name":"temporalStop","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"uint256","name":"","type":"uint256"},{"internalType":"uint256","name":"","type":"uint256"}],"name":"transferStamps","outputs":[{"internalType":"uint256","name":"headerNumber","type":"uint256"},{"internalType":"address","name":"tokenAddr","type":"address"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"unfreeze","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"name":"verifiedHeaders","outputs":[{"internalType":"uint256","name":"headerNumber","type":"uint256"},{"internalType":"bytes32","name":"receiptHash","type":"bytes32"},{"internalType":"bytes","name":"vote","type":"bytes"},{"internalType":"bytes","name":"governance","type":"bytes"},{"internalType":"address","name":"contributor","type":"address"},{"internalType":"bool","name":"stored","type":"bool"}],"stateMutability":"view","type":"function"}]`
+
+	abii, err := abi.JSON(strings.NewReader(string(abiStr)))
+	if err != nil {
+		log.Fatalf("failed to abi.JSON: %v", err)
+	}
+
+	data, err := abii.Pack("submitHeader", encodedHeader)
+	if err != nil {
+		log.Fatalf("failed to abi.Pack: %v", err)
+	}
+
+	signer := types.NewEIP155Signer(chainID)
+	tx, err := types.NewTransactionWithMap(types.TxTypeSmartContractExecution, map[types.TxValueKeyType]interface{}{
+		types.TxValueKeyNonce:    nonce,
+		types.TxValueKeyGasPrice: gasPrice,
+		types.TxValueKeyGasLimit: uint64(5000000000000),
+		types.TxValueKeyFrom:     self.address,
+		types.TxValueKeyAmount:   common.Big0,
+		types.TxValueKeyTo:       verifierContractAddr,
+		types.TxValueKeyData:     data,
+	})
+	if err != nil {
+		log.Fatalf("Failed to encode tx: %v", err)
+	}
+
+	err = tx.SignWithKeys(signer, self.privateKey)
+	if err != nil {
+		log.Fatalf("Failed to sign tx: %v", err)
+	}
+
+	hash, err := c.SendRawTransaction(ctx, tx)
+	if err != nil {
+		if err.Error() == blockchain.ErrNonceTooLow.Error() || err.Error() == blockchain.ErrReplaceUnderpriced.Error() {
+			fmt.Printf("SubmitHeader Account(%v) nonce(%v) : Failed to sendTransaction: %v\n", self.GetAddress().String(), nonce, err)
+			fmt.Printf("SubmitHeader Account(%v) nonce is added to %v\n", self.GetAddress().String(), nonce+1)
+			self.nonce++
+		} else {
+			fmt.Printf("SubmitHeader Account(%v) nonce(%v) : Failed to sendTransaction: %v\n", self.GetAddress().String(), nonce, err)
+		}
+		return common.Hash{0}, common.Hash{0}, err
+	}
+
+	self.nonce++
+	go func() {
+		receipt, err := bind.WaitMined(ctx, c, tx)
+		if err != nil {
+			log.Fatalf("Failed to get receipt for submitHeader tx: %v", err)
+			return
+		}
+		gasUsed := new(big.Int).SetUint64(receipt.GasUsed)
+		fmt.Printf("submitHeader for blockNum %d hash: 0x%v, status: %d, gasUsed: %v\n", blockNum, hex.EncodeToString(hash[:]), receipt.Status, gasUsed.String())
+	}()
+
+	return header.Hash(), hash, nil
+}
+
+func (self *Account) TransferSubmitReceipt(c *client.Client, verifierContractAddr common.Address, blockNum int64, blockHash, submitHeaderTxHash common.Hash, endpoint string) (common.Hash, error) {
+	ctx := context.Background() //context.WithTimeout(context.Background(), 100*time.Second)
+
+	self.mutex.Lock()
+	defer self.mutex.Unlock()
+
+	nonce := self.GetNonce(c)
+
+	abiStr := `[{"inputs":[],"stateMutability":"nonpayable","type":"constructor"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"requestTokenAddr","type":"address"},{"indexed":false,"internalType":"address","name":"handleTokenAddr","type":"address"},{"indexed":false,"internalType":"address","name":"from","type":"address"},{"indexed":false,"internalType":"address","name":"to","type":"address"},{"indexed":false,"internalType":"uint256","name":"amount","type":"uint256"},{"indexed":false,"internalType":"bytes32","name":"reqHeaderHash","type":"bytes32"},{"indexed":false,"internalType":"bytes","name":"key","type":"bytes"}],"name":"BridgeERC20TransferHandle","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"from","type":"address"},{"indexed":true,"internalType":"address","name":"to","type":"address"},{"indexed":true,"internalType":"uint256","name":"amount","type":"uint256"},{"indexed":false,"internalType":"address","name":"burnedTokenAddr","type":"address"},{"indexed":false,"internalType":"address","name":"ctTokenAddr","type":"address"}],"name":"BridgeERC20TransferRequest","type":"event"},{"anonymous":false,"inputs":[{"components":[{"internalType":"uint256","name":"curBridgeFee","type":"uint256"},{"internalType":"uint256","name":"curHdContribFee","type":"uint256"},{"internalType":"uint256","name":"curGovContribFee","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"},{"internalType":"uint256","name":"enrolledAt","type":"uint256"},{"internalType":"uint256","name":"effectedAt","type":"uint256"}],"indexed":true,"internalType":"struct IManager.FeeSchedule","name":"feeSchedule","type":"tuple"}],"name":"CancelScheduledFee","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"feeReceiver","type":"address"}],"name":"ChangedFeeReceiver","type":"event"},{"anonymous":false,"inputs":[{"components":[{"internalType":"uint256","name":"curBridgeFee","type":"uint256"},{"internalType":"uint256","name":"curHdContribFee","type":"uint256"},{"internalType":"uint256","name":"curGovContribFee","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"},{"internalType":"uint256","name":"enrolledAt","type":"uint256"},{"internalType":"uint256","name":"effectedAt","type":"uint256"}],"indexed":true,"internalType":"struct IManager.FeeSchedule","name":"feeSchedule","type":"tuple"}],"name":"FeeScheduled","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"blockNumber","type":"uint256"}],"name":"Frozen","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"uint256","name":"headerNumber","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"requiredQuorum","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"committeeSize","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"validatorSize","type":"uint256"}],"name":"HeaderIntegrityPassed","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"uint8","name":"version","type":"uint8"}],"name":"Initialized","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"feeReceiver","type":"address"},{"indexed":false,"internalType":"uint256","name":"bridgeFee","type":"uint256"},{"indexed":false,"internalType":"address","name":"headerContributor","type":"address"},{"indexed":false,"internalType":"uint256","name":"govContributionFee","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"headerContributionFee","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"verifierBalance","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"userSent","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"change","type":"uint256"}],"name":"PayBridgeFee","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"onChainToken","type":"address"},{"indexed":true,"internalType":"address","name":"counterpartChainToken","type":"address"},{"indexed":true,"internalType":"bytes32","name":"transferEvent","type":"bytes32"}],"name":"TokenPairRegistered","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"governanceContributor","type":"address"},{"indexed":false,"internalType":"uint256","name":"governanceContributionFee","type":"uint256"}],"name":"TransferGovContrib","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"blockNumber","type":"uint256"}],"name":"Unfrozen","type":"event"},{"inputs":[],"name":"bridgeLibAddr","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"cancelFeeSchedule","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"address","name":"","type":"address"}],"name":"ctToken2TransferEvent","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"address","name":"","type":"address"}],"name":"ctToken2ocToken","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"},{"internalType":"address","name":"ocTokenAddr","type":"address"},{"internalType":"address","name":"ctTokenAddr","type":"address"}],"name":"erc20TransferRequest","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"feeReceiver","outputs":[{"internalType":"address payable","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"feeSchedule","outputs":[{"internalType":"uint256","name":"curBridgeFee","type":"uint256"},{"internalType":"uint256","name":"curHdContribFee","type":"uint256"},{"internalType":"uint256","name":"curGovContribFee","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"},{"internalType":"uint256","name":"enrolledAt","type":"uint256"},{"internalType":"uint256","name":"effectedAt","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"freeze","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"getFee","outputs":[{"internalType":"uint256","name":"","type":"uint256"},{"internalType":"uint256","name":"","type":"uint256"},{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getStampBlockNumbers","outputs":[{"internalType":"uint256[]","name":"","type":"uint256[]"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"sender","type":"address"}],"name":"getTransferReceipt","outputs":[{"components":[{"internalType":"uint256","name":"headerNumber","type":"uint256"},{"internalType":"address","name":"tokenAddr","type":"address"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"}],"internalType":"struct Typs.BridgeTransferStamp[]","name":"","type":"tuple[]"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getVersion","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"pure","type":"function"},{"inputs":[],"name":"govStateAddr","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"_bridgeLibAddr","type":"address"},{"internalType":"address","name":"_govStateAddr","type":"address"},{"internalType":"bool","name":"_mintable","type":"bool"}],"name":"initialize","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"name":"isVerifiedHeader","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"mintable","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"address","name":"","type":"address"}],"name":"ocToken2ctToken","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"owner","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"prevFeeSchdule","outputs":[{"internalType":"uint256","name":"curBridgeFee","type":"uint256"},{"internalType":"uint256","name":"curHdContribFee","type":"uint256"},{"internalType":"uint256","name":"curGovContribFee","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"},{"internalType":"uint256","name":"enrolledAt","type":"uint256"},{"internalType":"uint256","name":"effectedAt","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint256","name":"effectAt","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"}],"name":"registerFeeSchedule","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"onChainToken","type":"address"},{"internalType":"address","name":"counterpartChainToken","type":"address"},{"internalType":"bytes32","name":"transferEventSig","type":"bytes32"}],"name":"registerTokenPair","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"verifier","type":"address"}],"name":"registerVerifier","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address payable","name":"_feeReceiver","type":"address"}],"name":"setFeeReceiver","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"headerHash","type":"bytes32"},{"internalType":"bytes","name":"rlpEncodedReceipt","type":"bytes"},{"internalType":"bytes[]","name":"MPTProof","type":"bytes[]"},{"internalType":"bytes","name":"key","type":"bytes"}],"name":"submitGov","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes","name":"rlpEncodedHeader","type":"bytes"}],"name":"submitHeader","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"headerHash","type":"bytes32"},{"internalType":"bytes","name":"rlpEncodedReceipt","type":"bytes"},{"internalType":"bytes[]","name":"MPTProof","type":"bytes[]"},{"internalType":"bytes","name":"key","type":"bytes"}],"name":"submitReceipt","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[],"name":"temporalStop","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"uint256","name":"","type":"uint256"},{"internalType":"uint256","name":"","type":"uint256"}],"name":"transferStamps","outputs":[{"internalType":"uint256","name":"headerNumber","type":"uint256"},{"internalType":"address","name":"tokenAddr","type":"address"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"unfreeze","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"name":"verifiedHeaders","outputs":[{"internalType":"uint256","name":"headerNumber","type":"uint256"},{"internalType":"bytes32","name":"receiptHash","type":"bytes32"},{"internalType":"bytes","name":"vote","type":"bytes"},{"internalType":"bytes","name":"governance","type":"bytes"},{"internalType":"address","name":"contributor","type":"address"},{"internalType":"bool","name":"stored","type":"bool"}],"stateMutability":"view","type":"function"}]`
+
+	abii, err := abi.JSON(strings.NewReader(string(abiStr)))
+	if err != nil {
+		log.Fatalf("failed to abi.JSON: %v", err)
+	}
+
+	count, err := c.TransactionCount(ctx, blockHash)
+	if err != nil {
+		log.Fatalf("Failed to get tx count: %v", err)
+		return common.Hash{0}, err
+	}
+
+	if count <= MaxTxCount {
+		return blockHash, nil
+	}
+	MaxTxCount = count
+
+	fee := &big.Int{}
+	fee.SetUint64(uint64(9000000000000000000))
+	bridgeTxCount := 0
+
+	signature, _ := hex.DecodeString("7a1ddb9dc7e950a74cfed8b204dc38c5d21c9225625a585d6111d9578d02c5ba")
+
+	txs := make([]*types.Transaction, 0)
+	indexes := make([]int, 0)
+	for i := 0; i < int(count); i++ {
+		tx, err := c.TransactionInBlock(ctx, blockHash, uint(i))
+		if err != nil {
+			log.Fatalf("Failed to get tx in block: %v", err)
+			return common.Hash{0}, err
+		}
+		receipt, err := c.TransactionReceipt(ctx, tx.Hash())
+		if err != nil {
+			log.Fatalf("Failed to get receipt: %v", err)
+			return common.Hash{0}, err
+		}
+
+		sigFound := false
+		for _, log := range receipt.Logs {
+			if bytes.Equal(log.Topics[0][:], signature[:]) {
+				sigFound = true
+			}
+		}
+
+		if !sigFound {
+			continue
+		}
+		fmt.Printf("found bridge tx with index: %d\n", i)
+		bridgeTxCount++
+
+		encodedReceipt, err := encodeReceipt(receipt)
+		if err != nil {
+			log.Fatalf("Failed to encode receipt: %v", err)
+			return common.Hash{0}, err
+		}
+
+		// Get proof
+		type ProofOutput struct {
+			Proof []string `json:"proof"`
+			Key   string   `json:"key"`
+		}
+		var proofOutput ProofOutput
+		var cmd *exec.Cmd
+		var stdout []byte
+		succeed := false
+		for i := 0; i < 5; i++ {
+			cmd = exec.Command("node", "proof.js", endpoint, receipt.TxHash.Hex())
+			stdout, err = cmd.Output()
+
+			if err != nil {
+				fmt.Printf("Failed %d times to run npx for proof: %v, txHash: %v\n", i, err, receipt.TxHash.Hex())
+				fmt.Printf("output: %v\n", string(stdout))
+				time.Sleep(1 * time.Second)
+				continue
+			}
+			outputStr := string(stdout)
+			outputStr = strings.ReplaceAll(outputStr, "'", "\"")
+			err = json.Unmarshal([]byte(outputStr), &proofOutput)
+			if err != nil {
+				fmt.Printf("output: %v\n", string(stdout))
+				log.Fatalf("Failed to parse proof from npx output: %v", err)
+			}
+			succeed = true
+		}
+		if !succeed {
+			log.Fatalf("Failed to run npx for proof: %v, txHash: %v", err, receipt.TxHash.Hex())
+		}
+		var proof [][]byte
+		for i := 0; i < len(proofOutput.Proof); i++ {
+			decoded, err := hex.DecodeString(proofOutput.Proof[i][2:])
+			if err != nil {
+				log.Fatalf("Failed to decode proof[%d] into []byte: %v", i, err)
+			}
+			proof = append(proof, decoded)
+		}
+
+		keyByte, err := hex.DecodeString(proofOutput.Key[2:])
+
+		// Make tx
+		data, err := abii.Pack("submitReceipt", blockHash, encodedReceipt, proof, keyByte)
+		if err != nil {
+			log.Fatalf("failed to abi.Pack: %v", err)
+		}
+
+		signer := types.NewEIP155Signer(chainID)
+		tx, err = types.NewTransactionWithMap(types.TxTypeSmartContractExecution, map[types.TxValueKeyType]interface{}{
+			types.TxValueKeyNonce:    nonce,
+			types.TxValueKeyGasPrice: gasPrice,
+			types.TxValueKeyGasLimit: uint64(5000000000000),
+			types.TxValueKeyFrom:     self.address,
+			types.TxValueKeyAmount:   fee,
+			types.TxValueKeyTo:       verifierContractAddr,
+			types.TxValueKeyData:     data,
+		})
+		if err != nil {
+			log.Fatalf("Failed to encode tx: %v", err)
+		}
+
+		err = tx.SignWithKeys(signer, self.privateKey)
+		if err != nil {
+			log.Fatalf("Failed to sign tx: %v", err)
+		}
+		txs = append(txs, tx)
+		indexes = append(indexes, i)
+		self.nonce++
+		nonce++
+
+		// To save time, we can just test one bridge tx in a block
+		//break
+	}
+
+	if len(txs) == 0 {
+		fmt.Printf("found no bridge tx in block: %d\n", blockNum)
+		return common.Hash{0}, nil
+	}
+
+	submitHeaderTx, _, err := c.TransactionByHash(ctx, submitHeaderTxHash)
+	if err != nil {
+		log.Fatalf("Cannot find tx with given submitHeader tx hash: %v\n", err)
+		return common.Hash{0}, err
+	}
+	bind.WaitMined(ctx, c, submitHeaderTx)
+
+	for index, tx := range txs {
+		hash, err := c.SendRawTransaction(ctx, tx)
+		if err != nil {
+			if err.Error() == blockchain.ErrNonceTooLow.Error() || err.Error() == blockchain.ErrReplaceUnderpriced.Error() {
+				fmt.Printf("submitReceipt Account(%v) nonce(%v) : Failed to sendTransaction: %v\n", self.GetAddress().String(), nonce, err)
+				fmt.Printf("submitReceipt Account(%v) nonce is added to %v\n", self.GetAddress().String(), nonce+1)
+				self.nonce++
+			} else {
+				fmt.Printf("submitReceipt Account(%v) nonce(%v) : Failed to sendTransaction: %v\n", self.GetAddress().String(), nonce, err)
+			}
+			return common.Hash{0}, err
+		}
+
+		go func(curIndex int) {
+			receipt, err := bind.WaitMined(ctx, c, tx)
+			if err != nil {
+				log.Fatalf("Failed to get receipt for erc20TransferVerify: %v", err)
+			}
+			gasUsed := new(big.Int).SetUint64(receipt.GasUsed)
+			fmt.Printf("submitReceipt hash: 0x%v, status: %d, gasUsed: %v, tx count: %d bridge tx count: %d index: %d\n", hex.EncodeToString(hash[:]), receipt.Status, gasUsed.String(), count, bridgeTxCount, curIndex)
+		}(indexes[index])
+	}
+
+	return blockHash, nil
+}
+
+func (self *Account) TransferGovUpdate(c *client.Client, endpoint string, verifierContractAddr common.Address, voteKey, voteVal string, toChainId uint) (common.Hash, *big.Int, error) {
+	ctx := context.Background() //context.WithTimeout(context.Background(), 100*time.Second)
+
+	self.mutex.Lock()
+	defer self.mutex.Unlock()
+
+	GlobalGovMutex.Lock()
+	defer GlobalGovMutex.Unlock()
+
+	nonce := self.GetNonce(c)
+	gaslimit := uint64(4100000000)
+
+	// Get blocknumber
+	curBlockNum, err := c.BlockNumber(ctx)
+	if err != nil {
+		return common.Hash{0}, big.NewInt(0), err
+	}
+	header, err := c.HeaderByNumber(ctx, curBlockNum)
+	if err != nil {
+		log.Fatalf("failed to get header: %v\n", err)
+	}
+	istanbulExtra, err := types.ExtractIstanbulExtra(header)
+	if err != nil {
+		log.Fatalf("failed to get istanbulextra: %v\n", err)
+	}
+	type request struct {
+		To   string `json:"to"`
+		Data string `json:"data"`
+	}
+
+	client := &http.Client{}
+	d := strings.NewReader(`{"jsonrpc":"2.0","method":"governance_chainConfigAt","params":[],"id":83}`)
+	req, err := http.NewRequest("POST", endpoint, d)
+	if err != nil {
+		log.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatal(err)
+	}
+	bodyText, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
+	resp.Body.Close()
+	fmt.Printf("%s\n", bodyText)
+	d = strings.NewReader(`{"jsonrpc":"2.0","method":"governance_vote","params":["` + voteKey + `", "` + voteVal + `"],"id":83}`)
+	req, err = http.NewRequest("POST", endpoint, d)
+	if err != nil {
+		log.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = client.Do(req)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+	bodyText, err = ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("%s\n", bodyText)
+
+	time.Sleep(3 * time.Second)
+	epoch := int64(1)
+	afterBlockNum, err := c.BlockNumber(ctx)
+	if err != nil {
+		return common.Hash{0}, big.NewInt(0), err
+	}
+
+	//startBlockNum := big.NewInt(beforeBlockNum.Uint64())
+	fmt.Printf("Start finding gov header from block: %d\n", curBlockNum.Int64())
+	limitBlockNum := big.NewInt(afterBlockNum.Int64() + epoch*2 + 10)
+	for {
+		if curBlockNum.Cmp(limitBlockNum) == 1 {
+			log.Fatalf("Cannot find gov header until blockNum: %d\n", curBlockNum.Int64())
+			return common.Hash{0}, common.Big0, fmt.Errorf("could not find gov header")
+		}
+		header, err = c.HeaderByNumber(ctx, curBlockNum)
+		if err != nil {
+			//log.Fatalf("Failed to find header with num: %v", err)
+			//return common.Hash{0}, common.Big0, err
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		//if len(header.Governance) > 2 {
+		if len(header.Vote) > 2 {
+			break
+		}
+		curBlockNum.Add(curBlockNum, big.NewInt(1))
+	}
+	encodedHeader := encodeHeader(header)
+
+	// verifier
+	abiStr := `[{"inputs":[],"stateMutability":"nonpayable","type":"constructor"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"requestTokenAddr","type":"address"},{"indexed":false,"internalType":"address","name":"handleTokenAddr","type":"address"},{"indexed":false,"internalType":"address","name":"from","type":"address"},{"indexed":false,"internalType":"address","name":"to","type":"address"},{"indexed":false,"internalType":"uint256","name":"amount","type":"uint256"},{"indexed":false,"internalType":"bytes32","name":"reqHeaderHash","type":"bytes32"},{"indexed":false,"internalType":"bytes","name":"key","type":"bytes"}],"name":"BridgeERC20TransferHandle","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"from","type":"address"},{"indexed":true,"internalType":"address","name":"to","type":"address"},{"indexed":true,"internalType":"uint256","name":"amount","type":"uint256"},{"indexed":false,"internalType":"address","name":"burnedTokenAddr","type":"address"},{"indexed":false,"internalType":"address","name":"ctTokenAddr","type":"address"}],"name":"BridgeERC20TransferRequest","type":"event"},{"anonymous":false,"inputs":[{"components":[{"internalType":"uint256","name":"curBridgeFee","type":"uint256"},{"internalType":"uint256","name":"curHdContribFee","type":"uint256"},{"internalType":"uint256","name":"curGovContribFee","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"},{"internalType":"uint256","name":"enrolledAt","type":"uint256"},{"internalType":"uint256","name":"effectedAt","type":"uint256"}],"indexed":true,"internalType":"struct IManager.FeeSchedule","name":"feeSchedule","type":"tuple"}],"name":"CancelScheduledFee","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"feeReceiver","type":"address"}],"name":"ChangedFeeReceiver","type":"event"},{"anonymous":false,"inputs":[{"components":[{"internalType":"uint256","name":"curBridgeFee","type":"uint256"},{"internalType":"uint256","name":"curHdContribFee","type":"uint256"},{"internalType":"uint256","name":"curGovContribFee","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"},{"internalType":"uint256","name":"enrolledAt","type":"uint256"},{"internalType":"uint256","name":"effectedAt","type":"uint256"}],"indexed":true,"internalType":"struct IManager.FeeSchedule","name":"feeSchedule","type":"tuple"}],"name":"FeeScheduled","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"blockNumber","type":"uint256"}],"name":"Frozen","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"uint256","name":"headerNumber","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"requiredQuorum","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"committeeSize","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"validatorSize","type":"uint256"}],"name":"HeaderIntegrityPassed","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"uint8","name":"version","type":"uint8"}],"name":"Initialized","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"feeReceiver","type":"address"},{"indexed":false,"internalType":"uint256","name":"bridgeFee","type":"uint256"},{"indexed":false,"internalType":"address","name":"headerContributor","type":"address"},{"indexed":false,"internalType":"uint256","name":"govContributionFee","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"headerContributionFee","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"verifierBalance","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"userSent","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"change","type":"uint256"}],"name":"PayBridgeFee","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"onChainToken","type":"address"},{"indexed":true,"internalType":"address","name":"counterpartChainToken","type":"address"},{"indexed":true,"internalType":"bytes32","name":"transferEvent","type":"bytes32"}],"name":"TokenPairRegistered","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"governanceContributor","type":"address"},{"indexed":false,"internalType":"uint256","name":"governanceContributionFee","type":"uint256"}],"name":"TransferGovContrib","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"blockNumber","type":"uint256"}],"name":"Unfrozen","type":"event"},{"inputs":[],"name":"bridgeLibAddr","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"cancelFeeSchedule","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"address","name":"","type":"address"}],"name":"ctToken2TransferEvent","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"address","name":"","type":"address"}],"name":"ctToken2ocToken","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"},{"internalType":"address","name":"ocTokenAddr","type":"address"},{"internalType":"address","name":"ctTokenAddr","type":"address"}],"name":"erc20TransferRequest","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"feeReceiver","outputs":[{"internalType":"address payable","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"feeSchedule","outputs":[{"internalType":"uint256","name":"curBridgeFee","type":"uint256"},{"internalType":"uint256","name":"curHdContribFee","type":"uint256"},{"internalType":"uint256","name":"curGovContribFee","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"},{"internalType":"uint256","name":"enrolledAt","type":"uint256"},{"internalType":"uint256","name":"effectedAt","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"freeze","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"getFee","outputs":[{"internalType":"uint256","name":"","type":"uint256"},{"internalType":"uint256","name":"","type":"uint256"},{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getStampBlockNumbers","outputs":[{"internalType":"uint256[]","name":"","type":"uint256[]"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"sender","type":"address"}],"name":"getTransferReceipt","outputs":[{"components":[{"internalType":"uint256","name":"headerNumber","type":"uint256"},{"internalType":"address","name":"tokenAddr","type":"address"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"}],"internalType":"struct Typs.BridgeTransferStamp[]","name":"","type":"tuple[]"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getVersion","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"pure","type":"function"},{"inputs":[],"name":"govStateAddr","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"_bridgeLibAddr","type":"address"},{"internalType":"address","name":"_govStateAddr","type":"address"},{"internalType":"bool","name":"_mintable","type":"bool"}],"name":"initialize","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"name":"isVerifiedHeader","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"mintable","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"address","name":"","type":"address"}],"name":"ocToken2ctToken","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"owner","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"prevFeeSchdule","outputs":[{"internalType":"uint256","name":"curBridgeFee","type":"uint256"},{"internalType":"uint256","name":"curHdContribFee","type":"uint256"},{"internalType":"uint256","name":"curGovContribFee","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"},{"internalType":"uint256","name":"enrolledAt","type":"uint256"},{"internalType":"uint256","name":"effectedAt","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint256","name":"effectAt","type":"uint256"},{"internalType":"uint256","name":"futureBridgeFee","type":"uint256"},{"internalType":"uint256","name":"futureHdContribFee","type":"uint256"},{"internalType":"uint256","name":"futureGovContribFee","type":"uint256"}],"name":"registerFeeSchedule","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"onChainToken","type":"address"},{"internalType":"address","name":"counterpartChainToken","type":"address"},{"internalType":"bytes32","name":"transferEventSig","type":"bytes32"}],"name":"registerTokenPair","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"verifier","type":"address"}],"name":"registerVerifier","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address payable","name":"_feeReceiver","type":"address"}],"name":"setFeeReceiver","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"headerHash","type":"bytes32"},{"internalType":"bytes","name":"rlpEncodedReceipt","type":"bytes"},{"internalType":"bytes[]","name":"MPTProof","type":"bytes[]"},{"internalType":"bytes","name":"key","type":"bytes"}],"name":"submitGov","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes","name":"rlpEncodedHeader","type":"bytes"}],"name":"submitHeader","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"headerHash","type":"bytes32"},{"internalType":"bytes","name":"rlpEncodedReceipt","type":"bytes"},{"internalType":"bytes[]","name":"MPTProof","type":"bytes[]"},{"internalType":"bytes","name":"key","type":"bytes"}],"name":"submitReceipt","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[],"name":"temporalStop","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"uint256","name":"","type":"uint256"},{"internalType":"uint256","name":"","type":"uint256"}],"name":"transferStamps","outputs":[{"internalType":"uint256","name":"headerNumber","type":"uint256"},{"internalType":"address","name":"tokenAddr","type":"address"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"unfreeze","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"name":"verifiedHeaders","outputs":[{"internalType":"uint256","name":"headerNumber","type":"uint256"},{"internalType":"bytes32","name":"receiptHash","type":"bytes32"},{"internalType":"bytes","name":"vote","type":"bytes"},{"internalType":"bytes","name":"governance","type":"bytes"},{"internalType":"address","name":"contributor","type":"address"},{"internalType":"bool","name":"stored","type":"bool"}],"stateMutability":"view","type":"function"}]`
+
+	abii, err := abi.JSON(strings.NewReader(string(abiStr)))
+	if err != nil {
+		log.Fatalf("failed to abi.JSON: %v", err)
+	}
+
+	data, err := abii.Pack("submitHeader", encodedHeader)
+	if err != nil {
+		log.Fatalf("failed to abi.Pack: %v", err)
+	}
+
+	signer := types.NewEIP155Signer(chainID)
+	tx, err := types.NewTransactionWithMap(types.TxTypeSmartContractExecution, map[types.TxValueKeyType]interface{}{
+		types.TxValueKeyNonce:    nonce,
+		types.TxValueKeyGasPrice: gasPrice,
+		types.TxValueKeyGasLimit: uint64(5000000000000),
+		types.TxValueKeyFrom:     self.address,
+		types.TxValueKeyAmount:   common.Big0,
+		types.TxValueKeyTo:       verifierContractAddr,
+		types.TxValueKeyData:     data,
+	})
+	if err != nil {
+		log.Fatalf("Failed to encode tx: %v", err)
+	}
+
+	err = tx.SignWithKeys(signer, self.privateKey)
+	if err != nil {
+		log.Fatalf("Failed to sign tx: %v", err)
+	}
+
+	hash, err := c.SendRawTransaction(ctx, tx)
+	if err != nil {
+		if err.Error() == blockchain.ErrNonceTooLow.Error() || err.Error() == blockchain.ErrReplaceUnderpriced.Error() {
+			fmt.Printf("GovUpdate 1 Account(%v) nonce(%v) : Failed to sendTransaction: %v\n", self.GetAddress().String(), nonce, err)
+			fmt.Printf("GovUpdate 1 Account(%v) nonce is added to %v\n", self.GetAddress().String(), nonce+1)
+			self.nonce++
+		} else {
+			fmt.Printf("GovUpdate 1 Account(%v) nonce(%v) : Failed to sendTransaction: %v\n", self.GetAddress().String(), nonce, err)
+		}
+		return hash, gasPrice, err
+	}
+
+	self.nonce++
+	nonce++
+
+	bind.WaitMined(ctx, c, tx)
+	receipt, err := c.TransactionReceipt(ctx, tx.Hash())
+	if err != nil {
+		log.Fatalf("Failed to get receipt: %v", err)
+		return hash, gasPrice, err
+	}
+	gasUsed := new(big.Int).SetUint64(receipt.GasUsed)
+	fmt.Printf("submitHeader hash: 0x%v, status: %d, gasUsed: %v, validator len: %d\n", hex.EncodeToString(hash[:]), receipt.Status, gasUsed.String(), len(istanbulExtra.Validators))
+
+	data, err = abii.Pack("submitGov", header.Hash(), []byte(""), [][]byte{}, []byte(""))
+	if err != nil {
+		log.Fatalf("failed to abi.Pack: %v", err)
+	}
+
+	signer = types.NewEIP155Signer(chainID)
+	tx, err = types.NewTransactionWithMap(types.TxTypeSmartContractExecution, map[types.TxValueKeyType]interface{}{
+		types.TxValueKeyNonce:    nonce,
+		types.TxValueKeyGasPrice: gasPrice,
+		types.TxValueKeyGasLimit: gaslimit,
+		types.TxValueKeyFrom:     self.address,
+		types.TxValueKeyAmount:   common.Big0,
+		types.TxValueKeyTo:       SmartContractAddr,
+		types.TxValueKeyData:     data,
+	})
+	if err != nil {
+		log.Fatalf("Failed to encode tx: %v", err)
+	}
+
+	err = tx.SignWithKeys(signer, self.privateKey)
+	if err != nil {
+		log.Fatalf("Failed to sign tx: %v", err)
+	}
+
+	hash, err = c.SendRawTransaction(ctx, tx)
+	if err != nil {
+		if err.Error() == blockchain.ErrNonceTooLow.Error() || err.Error() == blockchain.ErrReplaceUnderpriced.Error() {
+			fmt.Printf("GovUpdate 2 Account(%v) nonce(%v) : Failed to sendTransaction: %v\n", self.GetAddress().String(), nonce, err)
+			fmt.Printf("GovUpdate 2 Account(%v) nonce is added to %v\n", self.GetAddress().String(), nonce+1)
+			self.nonce++
+		} else {
+			fmt.Printf("GovUpdate 2 Account(%v) nonce(%v) : Failed to sendTransaction: %v\n", self.GetAddress().String(), nonce, err)
+		}
+		return common.Hash{0}, big.NewInt(0), err
+	}
+
+	self.nonce++
+	nonce++
+
+	bind.WaitMined(ctx, c, tx)
+
+	receipt, err = c.TransactionReceipt(ctx, tx.Hash())
+	if err != nil {
+		log.Fatalf("Failed to get receipt: %v", err)
+		return hash, gasPrice, err
+	}
+	gasUsed = new(big.Int).SetUint64(receipt.GasUsed)
+	fmt.Printf("submitGov hash: 0x%v, status: %d, gasUsed: %v, validator len: %d\n", hex.EncodeToString(hash[:]), receipt.Status, gasUsed.String(), len(istanbulExtra.Validators))
 	return hash, gasPrice, nil
 }
 

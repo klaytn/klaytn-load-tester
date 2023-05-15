@@ -5,8 +5,11 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"math/big"
 	"net/http"
@@ -22,6 +25,8 @@ import (
 	"github.com/klaytn/klaytn-load-tester/klayslave/blockbench/ioHeavyTC"
 	"github.com/klaytn/klaytn-load-tester/klayslave/blockbench/smallBankTC"
 	"github.com/klaytn/klaytn-load-tester/klayslave/blockbench/ycsbTC"
+	"github.com/klaytn/klaytn-load-tester/klayslave/bridgeRequestTC"
+	"github.com/klaytn/klaytn-load-tester/klayslave/bridgeSubmitTC"
 	"github.com/klaytn/klaytn-load-tester/klayslave/cpuHeavyTC"
 	"github.com/klaytn/klaytn-load-tester/klayslave/erc20TransferTC"
 	"github.com/klaytn/klaytn-load-tester/klayslave/erc721TransferTC"
@@ -102,9 +107,12 @@ var (
 	activeUserPercent = 100
 
 	SmartContractAccount *account.Account
+	//GovParamContractAddress common.Address
 
 	tcStr     string
 	tcStrList []string
+
+	bridgeInfoFilePath string
 
 	chargeValue *big.Int
 
@@ -140,7 +148,161 @@ func inTheTCList(tcName string) bool {
 
 // Dedicated and fixed private key used to deploy a smart contract for ERC20 and ERC721 value transfer performance test.
 var ERC20DeployPrivateKeyStr = "eb2c84d41c639178ff26a81f488c196584d678bb1390cc20a3aeb536f3969a98"
+var BridgeDeployPrivateKeyStr = "ed233e94fa04d1487080b773efbba4654dccc9371ac7225b790b641a42426bbf"
 var ERC721DeployPrivateKeyStr = "45c40d95c9b7898a21e073b5bf952bcb05f2e70072e239a8bbd87bb74a53355e"
+
+type BridgeInfo struct {
+	VerifierContractName  string
+	GovStateContractName  string
+	BridgeLibContractName string
+	BridgeLibAddr         string
+	VerifierAddr          string
+	GovStateAddr          string
+	TokenContractName     string
+	TokenAddr             string
+}
+
+type ChainInfo struct {
+	Http          string
+	SenderPrivKey string
+	FeeReceiver   string
+}
+
+type SettingJson struct {
+	BridgeFee     string
+	HdContribFee  string
+	GovContribFee string
+	ChainA        ChainInfo
+	ChainB        ChainInfo
+}
+
+// prepareBridgeRequestTransfer sets up Bridge request transfer performance test.
+func prepareBridgeRequestTransfer(accGrp map[common.Address]*account.Account) {
+	if !inTheTCList(bridgeRequestTC.Name) {
+		return
+	}
+
+	// parse privkey from settings.json
+	d, err := os.Open(bridgeInfoFilePath + "/test/integration_test/settings.json")
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	readall, _ := ioutil.ReadAll(d)
+
+	var setting SettingJson
+
+	json.Unmarshal(readall, &setting)
+	BridgeDeployPrivateKeyStr = setting.ChainA.SenderPrivKey
+
+	erc20DeployAcc := account.GetAccountFromKey(0, BridgeDeployPrivateKeyStr)
+	account.HardhatPath = bridgeInfoFilePath
+
+	bridgeRequestTC.Erc20DeployAccount = erc20DeployAcc
+	log.Printf("prepareBridgeTransfer", "addr", erc20DeployAcc.GetAddress().String())
+	chargeKLAYToTestAccounts(map[common.Address]*account.Account{erc20DeployAcc.GetAddress(): erc20DeployAcc})
+
+	// A ERC20 contract for bridge transfer performance TC.
+	bridgeRequestTC.SmartContractAccount = deploySingleSmartContract(erc20DeployAcc, erc20DeployAcc.DeployERC20, "Bridge Performance Test Contract")
+	newCoinBaseAccountMap := map[common.Address]*account.Account{newCoinbase.GetAddress(): newCoinbase}
+	firstChargeTokenToTestAccounts(newCoinBaseAccountMap, bridgeRequestTC.SmartContractAccount.GetAddress(), erc20DeployAcc.TransferERC20, big.NewInt(1e11))
+
+	chargeTokenToTestAccounts(accGrp, bridgeRequestTC.SmartContractAccount.GetAddress(), newCoinbase.TransferERC20, big.NewInt(1e10))
+
+	// GovParm contract
+	//bridgeRequestTC.GovParamContractAccount = deploySingleSmartContract(erc20DeployAcc, erc20DeployAcc.DeployGovParam, "Bridge Performance Test GovParam Contract")
+
+	// Parse already deployed verifier contract addr
+	data, err := os.Open(bridgeInfoFilePath + "/chainA_deployedAddrs.json")
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	byteValue, _ := ioutil.ReadAll(data)
+	fmt.Println(byteValue)
+
+	var bridgeInfo BridgeInfo
+
+	json.Unmarshal(byteValue, &bridgeInfo)
+
+	bridgeLibAddr, _ := hex.DecodeString(string(bridgeInfo.BridgeLibAddr[2:]))
+	govStateAddr, _ := hex.DecodeString(string(bridgeInfo.GovStateAddr[2:]))
+	verifierAddr, _ := hex.DecodeString(string(bridgeInfo.VerifierAddr[2:]))
+	account.BridgeLibraryContractAddr = common.BytesToAddress(bridgeLibAddr)
+	account.GovStateContractAddr = common.BytesToAddress(govStateAddr)
+	account.VerifierContractAddr = common.BytesToAddress(verifierAddr)
+
+	bridgeRequestTC.BridgeLibraryContractAccount = account.NewKlaytnAccountWithAddr(1, account.BridgeLibraryContractAddr)
+	bridgeRequestTC.GovStateContractAccount = account.NewKlaytnAccountWithAddr(1, account.GovStateContractAddr)
+	bridgeRequestTC.VerifierContractAccount = account.NewKlaytnAccountWithAddr(1, account.VerifierContractAddr)
+
+	deploySingleSmartContract(erc20DeployAcc, erc20DeployAcc.InitVerifier, "Bridge Performance Test Verifier Contract")
+
+	// Get list of committee
+	ctx := context.Background()
+	blockNum, err := gCli.BlockNumber(ctx)
+	if err != nil {
+		log.Fatalf("[PrepareBridge] Cannot get blocknum")
+		return
+	}
+	header, err := gCli.HeaderByNumber(ctx, blockNum)
+	if err != nil {
+		log.Fatalf("[PrepareBridge] Cannot get header")
+		return
+	}
+	istanbulExtra, err := types.ExtractIstanbulExtra(header)
+	if err != nil {
+		log.Fatalf("[PrepareBridge] Cannot get istanbul extra")
+		return
+	}
+
+	bridgeRequestTC.OriginalCommittee = make([]common.Address, len(istanbulExtra.Validators))
+	bridgeRequestTC.CurrentCommittee = make([]common.Address, len(istanbulExtra.Validators))
+
+	copy(bridgeRequestTC.OriginalCommittee, istanbulExtra.Validators)
+	copy(bridgeRequestTC.CurrentCommittee, istanbulExtra.Validators)
+
+	bridgeRequestTC.IsAdding = false
+}
+
+// prepareBridgeSubmitTransfer sets up Bridge submit transfer performance test.
+func prepareBridgeSubmitTransfer(accGrp map[common.Address]*account.Account) {
+	if !inTheTCList(bridgeSubmitTC.Name) {
+		return
+	}
+
+	// Get current blockNum for initial search
+	ctx := context.Background()
+	blockNum, err := gCli.BlockNumber(ctx)
+	if err != nil {
+		log.Fatalf("[PrepareBridgeSubmit] Cannot get blocknum")
+		return
+	}
+	if !inTheTCList(bridgeRequestTC.Name) {
+		data, err := os.Open(bridgeInfoFilePath + "/chainA_deployedAddrs.json")
+		if err != nil {
+			fmt.Println(err)
+		}
+
+		byteValue, _ := ioutil.ReadAll(data)
+		fmt.Println(byteValue)
+
+		var bridgeInfo BridgeInfo
+
+		json.Unmarshal(byteValue, &bridgeInfo)
+		bridgeLibAddr, _ := hex.DecodeString(string(bridgeInfo.BridgeLibAddr[2:]))
+		govStateAddr, _ := hex.DecodeString(string(bridgeInfo.GovStateAddr[2:]))
+		verifierAddr, _ := hex.DecodeString(string(bridgeInfo.VerifierAddr[2:]))
+		account.BridgeLibraryContractAddr = common.BytesToAddress(bridgeLibAddr)
+		account.GovStateContractAddr = common.BytesToAddress(govStateAddr)
+		account.VerifierContractAddr = common.BytesToAddress(verifierAddr)
+	}
+	account.MaxTxCount = 1000
+	bridgeSubmitTC.StartBlock = blockNum.Int64()
+	bridgeSubmitTC.BridgeLibraryContractAccount = account.NewKlaytnAccountWithAddr(1, account.BridgeLibraryContractAddr)
+	bridgeSubmitTC.GovStateContractAccount = account.NewKlaytnAccountWithAddr(1, account.GovStateContractAddr)
+	bridgeSubmitTC.VerifierContractAccount = account.NewKlaytnAccountWithAddr(1, account.VerifierContractAddr)
+}
 
 // prepareERC20Transfer sets up ERC20 transfer performance test.
 func prepareERC20Transfer(accGrp map[common.Address]*account.Account) {
@@ -200,6 +362,8 @@ func prepareTestAccountsAndContracts(accGrp map[common.Address]*account.Account)
 	// Second, deploy contracts used for some TCs.
 	// If the test case is not on the list, corresponding contract won't be deployed.
 	prepareERC20Transfer(accGrp)
+	prepareBridgeRequestTransfer(accGrp)
+	prepareBridgeSubmitTransfer(accGrp)
 	prepareStorageTrieWritePerformance(accGrp)
 
 	// Third, deploy contracts for general tests.
@@ -445,6 +609,7 @@ func initArgs(tcNames string) {
 	versionPtr := flag.Bool("version", false, "show version number")
 	httpMaxIdleConnsPtr := flag.Int("http.maxidleconns", 100, "maximum number of idle connections in default http client")
 	flag.StringVar(&tcStr, "tc", tcNames, "tasks which user want to run, multiple tasks are separated by comma.")
+	bridgeInfoFilePathPtr := flag.String("bridgeinfo", "", "path to bridge transfer contract info file")
 
 	flag.Parse()
 
@@ -468,6 +633,8 @@ func initArgs(tcNames string) {
 		// Run tasks without connecting to the master.
 		tcStrList = strings.Split(tcStr, ",")
 	}
+
+	bridgeInfoFilePath = *bridgeInfoFilePathPtr
 
 	gEndpoint = *gEndpointPtr
 
@@ -906,6 +1073,24 @@ func initTCList() (taskSet []*ExtendedTask) {
 		Weight:  10,
 		Fn:      newSmartContractExecutionTC.Run,
 		Init:    newSmartContractExecutionTC.Init,
+		AccGrp:  accGrpForSignedTx,
+		EndPint: gEndpoint,
+	})
+
+	taskSet = append(taskSet, &ExtendedTask{
+		Name:    "bridgeRequestTC",
+		Weight:  10,
+		Fn:      bridgeRequestTC.Run,
+		Init:    bridgeRequestTC.Init,
+		AccGrp:  accGrpForSignedTx,
+		EndPint: gEndpoint,
+	})
+
+	taskSet = append(taskSet, &ExtendedTask{
+		Name:    "bridgeSubmitTC",
+		Weight:  10,
+		Fn:      bridgeSubmitTC.Run,
+		Init:    bridgeSubmitTC.Init,
 		AccGrp:  accGrpForSignedTx,
 		EndPint: gEndpoint,
 	})
