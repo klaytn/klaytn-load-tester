@@ -297,7 +297,7 @@ func prepareBridgeSubmitTransfer(accGrp map[common.Address]*account.Account) {
 		account.GovStateContractAddr = common.BytesToAddress(govStateAddr)
 		account.VerifierContractAddr = common.BytesToAddress(verifierAddr)
 	}
-	account.MaxTxCount = 1000
+	account.MaxTxCount = 1
 	bridgeSubmitTC.StartBlock = blockNum.Int64()
 	bridgeSubmitTC.BridgeLibraryContractAccount = account.NewKlaytnAccountWithAddr(1, account.BridgeLibraryContractAddr)
 	bridgeSubmitTC.GovStateContractAccount = account.NewKlaytnAccountWithAddr(1, account.GovStateContractAddr)
@@ -1475,7 +1475,9 @@ func main() {
 
 	setRLimit(syscall.RLIMIT_NOFILE, 1024*400)
 
-	// Locust Slave Run
-	boomer.Run(filteredBoomerTask...)
-	//boomer.Run(cpuHeavyTx)
+	// Locust Standalone run
+	numClients := 10
+	spawnRate := float64(10)
+	b := boomer.NewStandaloneBoomer(numClients, spawnRate)
+	b.Run(filteredBoomerTask...)
 }
