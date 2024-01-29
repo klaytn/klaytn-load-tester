@@ -1,8 +1,3 @@
-# Branch name will be changed
-
-We will change the `master` branch to `main` on Dec 15, 2022.
-After the branch policy change, please check your local or forked repository settings.
-
 # klaytn-load-tester
 klaytn-load-tester is a load tester using boomer library and it is written in golang.
 
