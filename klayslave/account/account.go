@@ -1747,20 +1747,21 @@ func (self *Account) TransferNewEthereumDynamicFeeTx(c *client.Client, to *Accou
 	if to != nil {
 		toAddress = &to.address
 	}
-	callMsg := klaytn.CallMsg{
-		From:     self.address,
-		To:       toAddress,
-		Gas:      gas,
-		GasPrice: gasPrice,
-		Value:    value,
-		Data:     input,
-	}
-	accessList, _, _, err := c.CreateAccessList(ctx, callMsg)
-	if err != nil {
-		log.Fatalf("Failed to get accessList: %v", err)
-	}
+	//callMsg := klaytn.CallMsg{
+	//	From:     self.address,
+	//	To:       toAddress,
+	//	Gas:      gas,
+	//	GasPrice: gasPrice,
+	//	Value:    value,
+	//	Data:     input,
+	//}
+	//accessList, _, _, err := c.CreateAccessList(ctx, callMsg)
+	//if err != nil {
+	//	log.Fatalf("Failed to get accessList: %v", err)
+	//}
 
 	signer := types.LatestSignerForChainID(chainID)
+	gasTipCap := big.NewInt(rand.Int63n(51))
 
 	tx := types.NewTx(&types.TxInternalDataEthereumDynamicFee{
 		ChainID:      chainID,
@@ -1768,13 +1769,12 @@ func (self *Account) TransferNewEthereumDynamicFeeTx(c *client.Client, to *Accou
 		Recipient:    toAddress,
 		GasLimit:     gas,
 		GasFeeCap:    gasPrice,
-		GasTipCap:    gasPrice,
+		GasTipCap:    gasTipCap,
 		Amount:       value,
-		AccessList:   *accessList,
 		Payload:      input,
 	})
 
-	err = tx.SignWithKeys(signer, self.privateKey)
+	err := tx.SignWithKeys(signer, self.privateKey)
 	if err != nil {
 		log.Fatalf("Failed to sign tx: %v", err)
 	}
