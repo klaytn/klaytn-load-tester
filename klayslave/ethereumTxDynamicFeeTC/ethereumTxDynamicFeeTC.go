@@ -89,7 +89,7 @@ func Run() {
 	cli := cliPool.Alloc().(*client.Client)
 
 	from := accGrp[rand.Int()%nAcc]
-	to, value, input, reqType, err := ethereumTxLegacyTC.CreateRandomArguments(from.GetAddress())
+	to, value, input, reqType, err := ethereumTxLegacyTC.CreateRandomArguments(from.GetAddress(), accGrp[rand.Int()%nAcc], SmartContractAccount)
 	if err != nil {
 		fmt.Printf("Failed to creat arguments to send Dynamic Fee Tx: %v\n", err.Error())
 		return

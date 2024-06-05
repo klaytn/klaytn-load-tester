@@ -93,7 +93,7 @@ func Run() {
 	cli := cliPool.Alloc().(*client.Client)
 
 	from := accGrp[rand.Int()%nAcc]
-	to, value, input, reqType, err := CreateRandomArguments(from.GetAddress())
+	to, value, input, reqType, err := CreateRandomArguments(from.GetAddress(), accGrp[rand.Int()%nAcc], SmartContractAccount)
 	if err != nil {
 		fmt.Printf("Failed to creat arguments to send Legacy Tx: %v\n", err.Error())
 		return
@@ -185,7 +185,7 @@ func GetReceipt(cli *client.Client, txHash common.Hash, maxRetry int) map[string
 
 // CreateRandomArguments generates arguments randomly with various cases.
 // simple value transfer, smart contract deployment, smart contract execution
-func CreateRandomArguments(addr common.Address) (*account.Account, *big.Int, string, int, error) {
+func CreateRandomArguments(addr common.Address, eoa *account.Account, sca *account.Account) (*account.Account, *big.Int, string, int, error) {
 	// randomLegacyReqType == 0 : Value transfer
 	// randomLegacyReqType == 1 : Smart contract deployment
 	// randomLegacyReqType == 2 : Smart contract execution
@@ -197,13 +197,13 @@ func CreateRandomArguments(addr common.Address) (*account.Account, *big.Int, str
 
 	var err error
 	if randomLegacyReqType == 0 {
-		to = accGrp[rand.Int()%nAcc]
+		to = eoa
 		value = big.NewInt(int64(rand.Int() % 3))
 	} else if randomLegacyReqType == 1 {
 		value = big.NewInt(0)
 		input = code
 	} else if randomLegacyReqType == 2 {
-		to = SmartContractAccount
+		to = sca
 		value = big.NewInt(0)
 		input, err = MakeFunctionCall(addr)
 		if err != nil {
