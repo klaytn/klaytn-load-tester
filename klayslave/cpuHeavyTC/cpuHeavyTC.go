@@ -10,6 +10,7 @@ import (
 
 	"github.com/klaytn/klaytn-load-tester/klayslave/account"
 	"github.com/klaytn/klaytn-load-tester/klayslave/clipool"
+	"github.com/klaytn/klaytn-load-tester/klayslave/task"
 	"github.com/klaytn/klaytn/accounts/abi/bind"
 	"github.com/klaytn/klaytn/blockchain"
 	"github.com/klaytn/klaytn/blockchain/types"
@@ -33,10 +34,10 @@ var (
 	gasPrice *big.Int
 )
 
-func Init(accs []*account.Account, endpoint string, gp *big.Int) {
-	gasPrice = gp
+func Init(params *task.Params) {
+	gasPrice = params.GasPrice
 
-	endPoint = endpoint
+	endPoint = params.Endpoint
 
 	cliCreate := func() interface{} {
 		c, err := client.Dial(endPoint)
@@ -48,13 +49,13 @@ func Init(accs []*account.Account, endpoint string, gp *big.Int) {
 
 	cliPool.Init(20, 300, cliCreate)
 
-	for _, acc := range accs {
+	for _, acc := range params.AccGrp {
 		accGrp = append(accGrp, acc)
 	}
 
 	nAcc = len(accGrp)
 
-	deployContract(accs[0], endPoint)
+	deployContract(params.AccGrp[0], endPoint)
 }
 
 func deployContract(coinbase *account.Account, endPoint string) {

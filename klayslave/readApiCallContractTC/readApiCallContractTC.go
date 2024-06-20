@@ -14,6 +14,7 @@ import (
 	"github.com/klaytn/klaytn"
 	"github.com/klaytn/klaytn-load-tester/klayslave/account"
 	"github.com/klaytn/klaytn-load-tester/klayslave/clipool"
+	"github.com/klaytn/klaytn-load-tester/klayslave/task"
 	"github.com/klaytn/klaytn/accounts/abi/bind"
 	"github.com/klaytn/klaytn/blockchain/types"
 	"github.com/klaytn/klaytn/client"
@@ -41,7 +42,7 @@ var (
 	retValOfEstimateGas uint64
 )
 
-func Init(accs []*account.Account, ep string, gp *big.Int) {
+func Init(params *task.Params) {
 	mutex.Lock()
 	defer mutex.Unlock()
 
@@ -50,8 +51,8 @@ func Init(accs []*account.Account, ep string, gp *big.Int) {
 	}
 	initialized = true
 
-	gasPrice = gp
-	endPoint = ep
+	gasPrice = params.GasPrice
+	endPoint = params.Endpoint
 	cliCreate := func() interface{} {
 		c, err := client.Dial(endPoint)
 		if err != nil {
@@ -61,12 +62,12 @@ func Init(accs []*account.Account, ep string, gp *big.Int) {
 	}
 	cliPool.Init(20, 300, cliCreate)
 
-	for _, acc := range accs {
+	for _, acc := range params.AccGrp {
 		accGrp = append(accGrp, acc)
 	}
 	nAcc = len(accGrp)
 
-	deployContract(accs[0], endPoint)
+	deployContract(params.AccGrp[0], endPoint)
 	setAnswerVariables()
 }
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/klaytn/klaytn-load-tester/klayslave/account"
 	"github.com/klaytn/klaytn-load-tester/klayslave/clipool"
+	"github.com/klaytn/klaytn-load-tester/klayslave/task"
 	"github.com/klaytn/klaytn/client"
 	"github.com/myzhan/boomer"
 )
@@ -34,10 +35,10 @@ var (
 	SmartContractAccount *account.Account
 )
 
-func Init(accs []*account.Account, endpoint string, gp *big.Int) {
-	gasPrice = gp
+func Init(params *task.Params) {
+	gasPrice = params.GasPrice
 
-	endPoint = endpoint
+	endPoint = params.Endpoint
 
 	cliCreate := func() interface{} {
 		c, err := client.Dial(endPoint)
@@ -49,7 +50,7 @@ func Init(accs []*account.Account, endpoint string, gp *big.Int) {
 
 	cliPool.Init(20, 300, cliCreate)
 
-	for _, acc := range accs {
+	for _, acc := range params.AccGrp {
 		accGrp = append(accGrp, acc)
 	}
 
